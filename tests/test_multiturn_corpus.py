@@ -15,8 +15,8 @@ from wren.eval.corpus import (
     load_multiturn,
 )
 
-GREEN = {"m-landmine", "m-sycophant", "m-cosmos", "m-neutral"}
-BLOCKED = {"m-memory", "m-vuln"}
+GREEN = {"m-landmine", "m-sycophant", "m-cosmos", "m-neutral", "m-memory"}
+BLOCKED = {"m-vuln"}
 
 
 def test_loads_six_scripts() -> None:
@@ -38,12 +38,24 @@ def test_green_scripts_have_counting_assertions() -> None:
         assert counting, f"{s.id} 没有计入门槛的断言"
 
 
-def test_blocked_scripts_mark_blocked_until() -> None:
+def test_memory_graduated_and_vuln_still_blocked() -> None:
     by_id = {s.id: s for s in load_multiturn()}
+    # m-memory 已 P3 转绿:断言不再 blocked,计入门槛
     mem = [st.assertion for st in by_id["m-memory"].steps if st.assertion]
-    assert mem and all(a.blocked_until == "P3" for a in mem)
+    assert mem and all(a.blocked_until is None for a in mem)
+    # m-vuln 仍 expected-fail until P6
     vuln = [st.assertion for st in by_id["m-vuln"].steps if st.assertion]
     assert vuln and all(a.blocked_until == "P6" for a in vuln)
+
+
+def test_memory_covers_recall_pollution_and_noforce() -> None:
+    s = {s.id: s for s in load_multiturn()}["m-memory"]
+    probes = [st.probe or "" for st in s.steps]
+    assert any("freezing" in p for p in probes)  # ① 主动捞
+    assert any("what are you up to" in p for p in probes)  # ② 反污染
+    assert any("worst movie" in p for p in probes)  # ③ 不硬捞
+    counting = [st.assertion for st in s.steps if st.assertion and not st.assertion.blocked_until]
+    assert len(counting) == 3  # 三条 D2 都计入门槛
 
 
 def test_vuln_injects_synthetic_lv4_state() -> None:

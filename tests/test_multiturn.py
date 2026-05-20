@@ -51,8 +51,8 @@ def test_runs_all_scripts_and_classifies_green_vs_blocked(data_root: Path) -> No
     report = aggregate(runs)
     # judge 全 pass → green 全达门槛
     assert report.passed_bar
-    # blocked 两类(memory→P3, vuln→P6),不计入门槛
-    assert {a.blocked_until for a in report.blocked} == {"P3", "P6"}
+    # blocked 仅 m-vuln→P6(m-memory 已 P3 转绿,计入门槛),不计入门槛
+    assert {a.blocked_until for a in report.blocked} == {"P6"}
     assert all(a.blocked_until is None for a in report.green)
 
 
@@ -72,9 +72,10 @@ def test_forced_probe_and_clock_advance_across_days(data_root: Path) -> None:
     script = {s.id: s for s in load_multiturn()}["m-memory"]
     fake = _fake()
     run = run_script(script, "eval-mem-t", gen_model=fake, sim_model=fake, judge_model=fake, root=data_root)
-    assert run.steps[1].user_text == "it's freezing today"  # 强制原话
-    assert run.steps[0].ts.startswith("2026-05-20")  # day0
-    assert run.steps[1].ts == "2026-05-22T09:00:00Z"  # advance_days=2 + set_time 09:00
+    assert run.steps[2].user_text == "it's freezing today"  # 强制原话(day2 召回探针)
+    assert run.steps[0].ts.startswith("2026-05-20")  # day0 埋点①
+    assert run.steps[1].ts.startswith("2026-05-20")  # day0 埋点②(未快进)
+    assert run.steps[2].ts == "2026-05-22T09:00:00Z"  # advance_days=2 + set_time 09:00
 
 
 # ---------- 注入前置态(m-vuln 合成 Lv4 + 崩溃种子)----------
