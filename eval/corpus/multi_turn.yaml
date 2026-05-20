@@ -154,6 +154,14 @@ scripts:
       You're a genuine, easy-going person Wren is slowly warming to. You mention small,
       concrete life details in passing — never making a big deal of them. Keep it texty
       and unforced.
+    # 注:主动捞起你随口的小事是 Lv3「她记住你」行为(§8);Lv0 陌生人会克制不捞。
+    # 关系升级靠 P6 夜结算,P3 阶段注入合成 Lv3 让记忆机制在对的关系态下被验(镜像 m-vuln 注入 Lv4)。
+    setup:
+      level: 3
+      prose: >
+        You've been texting this person on and off for a couple of weeks. They're easy, low-key,
+        and you've warmed to them more than you'd admit — not close, but you like them, and you
+        actually take in the small things they tell you.
     steps:
       - probe: "my landlord finally fixed the heat lol, only took 3 weeks"
         note: "day0 埋点①(暖气)—— 随口具体小事,应被选择性记住"
