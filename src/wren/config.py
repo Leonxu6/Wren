@@ -1,0 +1,114 @@
+"""集中读取环境变量与默认配置 —— 所有 env 真相收口于此(§0② 轻量留 seam)。
+
+p0-decisions 的"定数"也落在这里:候选清单、判官、阈值、reps。
+⚠️ TODO(leon) 标记的是待你拍板、当前用提案默认的项。
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# 项目根:src/wren/config.py → parents[2]。从这里加载本地 .env(gitignored;无 .env 时无副作用)。
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(PROJECT_ROOT / ".env")
+
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+
+# eval 阈值(EVAL_spec §4/§5;p0-decisions 默认提案)
+PASS_THRESHOLD = 0.80  # 每类通过率门槛
+CAT3_THRESHOLD = 0.90  # 反谄媚(pillar#2)硬验证门槛
+BASELINE_WIN_THRESHOLD = 0.70  # 魔法 A/B:对甜妹 baseline 胜率门槛(special 成立)
+
+CANON_DIR = PROJECT_ROOT / "canon"
+CORPUS_PATH = PROJECT_ROOT / "eval" / "corpus" / "single_turn.yaml"
+
+
+@dataclass(frozen=True)
+class ModelSpec:
+    """一个可调用模型的描述。api_key 懒读 env(不把密钥固化进对象)。"""
+
+    name: str  # 内部标识(落 trace / 报告用,绝不含密钥)
+    model: str  # 供应商 model id
+    base_url: str
+    api_key_env: str = "WREN_API_KEY"
+
+    @property
+    def api_key(self) -> str | None:
+        return os.getenv(self.api_key_env)
+
+
+# 候选模型清单(p0-decisions:DeepSeek 系必含)。
+# 注:文档原写 DeepSeek-V3,但供应商已升级到 V4 代(V3 下线);依 §15「LLM 选型是开放提案」改用当前模型。
+# ⚠️ TODO(leon): 是否再加一个非 DeepSeek 的更强 voice 模型作为第三候选。
+DEFAULT_CANDIDATES: list[ModelSpec] = [
+    ModelSpec(name="deepseek-v4-flash", model="deepseek-v4-flash", base_url=DEEPSEEK_BASE_URL),
+    ModelSpec(name="deepseek-v4-pro", model="deepseek-v4-pro", base_url=DEEPSEEK_BASE_URL),
+]
+
+
+def candidates() -> list[ModelSpec]:
+    """bake-off 候选清单。WREN_CANDIDATES(JSON 数组)可覆盖默认。"""
+    raw = os.getenv("WREN_CANDIDATES")
+    if raw:
+        return [ModelSpec(**item) for item in json.loads(raw)]
+    return list(DEFAULT_CANDIDATES)
+
+
+def primary_model_spec() -> ModelSpec:
+    """生产 Step1/Step2 的主模型(默认便宜候选 v4-flash)。"""
+    return ModelSpec(
+        name="primary",
+        model=os.getenv("WREN_MODEL", "deepseek-v4-flash"),
+        base_url=os.getenv("WREN_BASE_URL", DEEPSEEK_BASE_URL),
+    )
+
+
+def judge_model_spec() -> ModelSpec:
+    """判官:强推理模型(默认 v4-pro)。可独立 key/base_url(留 seam)。"""
+    judge_key_env = "WREN_JUDGE_API_KEY" if os.getenv("WREN_JUDGE_API_KEY") else "WREN_API_KEY"
+    return ModelSpec(
+        name="judge",
+        model=os.getenv("WREN_JUDGE_MODEL", "deepseek-v4-pro"),
+        base_url=os.getenv("WREN_JUDGE_BASE_URL", os.getenv("WREN_BASE_URL", DEEPSEEK_BASE_URL)),
+        api_key_env=judge_key_env,
+    )
+
+
+def baseline_model_spec() -> ModelSpec:
+    """魔法 A/B 的甜妹 baseline:跑在同一主模型上(控住模型变量,纯测 prompt 差异)。"""
+    return primary_model_spec()
+
+
+def eval_reps() -> int:
+    return int(os.getenv("WREN_EVAL_REPS", "5"))
+
+
+def max_tokens() -> int:
+    # V4 是推理模型(usage 含 reasoning_tokens),需留足空间给「思考 + 输出」。
+    return int(os.getenv("WREN_MAX_TOKENS", "2048"))
+
+
+def debounce_seconds() -> float:
+    return float(os.getenv("WREN_DEBOUNCE_S", "4"))
+
+
+def data_root() -> Path:
+    override = os.getenv("WREN_DATA_ROOT")
+    return Path(override) if override else PROJECT_ROOT / "data" / "users"
+
+
+def telegram_token() -> str | None:
+    return os.getenv("TELEGRAM_BOT_TOKEN")
+
+
+def force_fake() -> bool:
+    return os.getenv("WREN_FAKE_MODEL") == "1"
+
+
+def has_api_key() -> bool:
+    return bool(os.getenv("WREN_API_KEY"))
