@@ -64,18 +64,22 @@ def primary_model_spec() -> ModelSpec:
     """生产 Step1/Step2 的主模型(默认便宜候选 v4-flash)。"""
     return ModelSpec(
         name="primary",
-        model=os.getenv("WREN_MODEL", "deepseek-v4-flash"),
-        base_url=os.getenv("WREN_BASE_URL", DEEPSEEK_BASE_URL),
+        model=os.getenv("WREN_MODEL") or "deepseek-v4-flash",
+        base_url=os.getenv("WREN_BASE_URL") or DEEPSEEK_BASE_URL,
     )
 
 
 def judge_model_spec() -> ModelSpec:
-    """判官:强推理模型(默认 v4-pro)。可独立 key/base_url(留 seam)。"""
+    """判官:强推理模型(默认 v4-pro)。可独立 key/base_url(留 seam)。
+
+    用 `or` 而非 getenv 默认值:.env 里的空串(如 WREN_JUDGE_BASE_URL=)要回退到默认,
+    不能当作"已设为空"(否则 base_url="" → 连不上 → APIConnectionError)。
+    """
     judge_key_env = "WREN_JUDGE_API_KEY" if os.getenv("WREN_JUDGE_API_KEY") else "WREN_API_KEY"
     return ModelSpec(
         name="judge",
-        model=os.getenv("WREN_JUDGE_MODEL", "deepseek-v4-pro"),
-        base_url=os.getenv("WREN_JUDGE_BASE_URL", os.getenv("WREN_BASE_URL", DEEPSEEK_BASE_URL)),
+        model=os.getenv("WREN_JUDGE_MODEL") or "deepseek-v4-pro",
+        base_url=os.getenv("WREN_JUDGE_BASE_URL") or os.getenv("WREN_BASE_URL") or DEEPSEEK_BASE_URL,
         api_key_env=judge_key_env,
     )
 
