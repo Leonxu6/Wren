@@ -37,6 +37,7 @@ async def _handle_and_send(
     outcome = await asyncio.to_thread(
         handle_turn, str(chat_id), user_text, store, s1, s2, clock=clock
     )
+    _log_turn(chat_id, user_text, outcome)
     if outcome.replied and outcome.bubbles:
         await send_bubbles(
             bot,
@@ -47,6 +48,19 @@ async def _handle_and_send(
             sleeper=sleeper,
         )
     return outcome
+
+
+def _log_turn(chat_id: int, user_text: str, outcome: TurnOutcome) -> None:
+    """每轮一行实时对话流(flush 立即可见,便于 tail / 实时复盘)。"""
+    iv = (outcome.trace.step1.get("inner_voice_after") or "").replace("\n", " ").strip()
+    if len(iv) > 90:
+        iv = iv[:90] + "…"
+    print(f"\n[{chat_id}] user: {user_text!r}", flush=True)
+    print(f"   ▸ (thinks) {iv}", flush=True)
+    if outcome.replied:
+        print(f"   ▸ wren: {outcome.bubbles}  (waited {outcome.delay_s}s)", flush=True)
+    else:
+        print("   ▸ wren: — silence (left on read)", flush=True)
 
 
 # ---------- 命令 ----------
