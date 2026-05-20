@@ -1,0 +1,56 @@
+[project]
+name = "wren"
+version = "0.1.0"
+description = "Wren — 英文 AI 关系模拟 Telegram bot(Phase 0 eval + walking skeleton)"
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.40",
+    "python-telegram-bot>=21,<22",
+    "pyyaml>=6",
+    "python-dotenv>=1",
+]
+
+[project.scripts]
+wren-harness = "wren.eval.harness:main"
+wren-bot = "wren.bot.app:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "types-PyYAML>=6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wren"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
+ignore = ["E501"]  # 行长由 formatter 处理;voice 样本/prompt 可能长
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["wren"]
+mypy_path = "src"
+strict = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["telegram.*", "apscheduler.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]
