@@ -67,3 +67,53 @@ def test_delete_wipes_everything(data_root: Path) -> None:
     assert s.dir.exists()
     s.delete()
     assert not s.dir.exists()
+
+
+# ---- events(中期记忆 · Phase 3)----
+
+
+def test_event_round_trip(data_root: Path) -> None:
+    s = UserStore("ev1", data_root)
+    s.init_user()
+    s.append_event("landlord fixed the heat", topic="heat", valence="neutral", salience="low")
+    s.append_event("mom coming to the city", topic="mom", valence="neg", salience="high")
+    evs = s.read_event_list()
+    assert [e.text for e in evs] == ["landlord fixed the heat", "mom coming to the city"]
+    assert evs[1].topic == "mom" and evs[1].salience == "high"
+    block = s.read_events()
+    assert "[heat|neutral|low] landlord fixed the heat" in block
+    assert "[mom|neg|high] mom coming to the city" in block
+
+
+def test_events_empty_when_none(data_root: Path) -> None:
+    s = UserStore("ev2", data_root)
+    s.init_user()
+    assert s.read_events() == ""  # stub 头不含事件行
+    assert s.read_event_list() == []
+
+
+def test_append_event_sanitizes_separators(data_root: Path) -> None:
+    s = UserStore("ev3", data_root)
+    s.init_user()
+    s.append_event("got a raise | finally]", topic="work|life", valence="pos", salience="med")
+    evs = s.read_event_list()
+    assert len(evs) == 1  # 分隔符被清理,行仍可解析
+    assert "|" not in evs[0].text and "]" not in evs[0].text
+
+
+def test_append_event_skips_empty_text(data_root: Path) -> None:
+    s = UserStore("ev4", data_root)
+    s.init_user()
+    s.append_event("   ", topic="x", valence="neutral", salience="low")
+    assert s.read_event_list() == []
+
+
+def test_event_cap_keeps_salient_and_recent(data_root: Path) -> None:
+    s = UserStore("ev5", data_root)
+    s.init_user()
+    s.append_event("keeper", topic="big", valence="neg", salience="high")  # 最旧,但高 salience
+    for i in range(1, 6):
+        s.append_event(f"x{i}", topic="t", valence="neutral", salience="low")
+    texts = [e.text for e in s.read_event_list(cap=3)]
+    # 高 salience 即便最旧也留;低 salience 先逐出最旧的(x1-x3);近期低(x4,x5)留;时间序输出
+    assert texts == ["keeper", "x4", "x5"]

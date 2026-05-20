@@ -103,6 +103,12 @@ def max_tokens() -> int:
     return int(os.getenv("WREN_MAX_TOKENS", "2048"))
 
 
+def events_cap() -> int:
+    """中期记忆注入 Step1 的事件条数上限(recency 排序 + salience 逐出)。
+    seam:histories 长起来再换 token-cap / 夜间蒸馏 / 关键词召回(仍非 RAG)。"""
+    return int(os.getenv("WREN_EVENTS_CAP", "40"))
+
+
 def debounce_seconds() -> float:
     return float(os.getenv("WREN_DEBOUNCE_S", "4"))
 
