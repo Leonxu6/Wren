@@ -114,8 +114,12 @@ def debounce_seconds() -> float:
 
 
 def data_root() -> Path:
-    override = os.getenv("WREN_DATA_ROOT")
-    return Path(override) if override else PROJECT_ROOT / "data" / "users"
+    # 防御:.env 里 `WREN_DATA_ROOT=   # 注释` 的行内注释可能被 dotenv 吞进值,
+    # 空白 / 以 # 开头的值视作未设(否则会建出怪目录,如 `# 留空 → .`)。
+    override = os.getenv("WREN_DATA_ROOT", "").strip()
+    if not override or override.startswith("#"):
+        return PROJECT_ROOT / "data" / "users"
+    return Path(override)
 
 
 def telegram_token() -> str | None:
