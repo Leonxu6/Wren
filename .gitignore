@@ -1,0 +1,31 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.python-version
+
+# ===== 密钥 / 环境 —— 永不提交 Telegram / LLM token =====
+.env
+.env.*
+!.env.example
+
+# ===== 运行期状态 —— 每次运行 / 每用户生成,不进版本库 =====
+# (canon/ 是版本化的 ground truth,故意【不】忽略)
+world/today.md
+data/users/
+
+# ===== 测试 / lint 缓存 =====
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+
+# ===== 系统 / 编辑器 =====
+.DS_Store
+*.log
+.idea/
+.vscode/
