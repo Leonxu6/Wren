@@ -26,6 +26,7 @@ BASELINE_WIN_THRESHOLD = 0.70  # 魔法 A/B:对甜妹 baseline 胜率门槛(spec
 
 CANON_DIR = PROJECT_ROOT / "canon"
 CORPUS_PATH = PROJECT_ROOT / "eval" / "corpus" / "single_turn.yaml"
+MULTITURN_CORPUS_PATH = PROJECT_ROOT / "eval" / "corpus" / "multi_turn.yaml"
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,11 @@ def baseline_model_spec() -> ModelSpec:
 
 def eval_reps() -> int:
     return int(os.getenv("WREN_EVAL_REPS", "5"))
+
+
+def multiturn_reps() -> int:
+    """多轮:每 archetype 跑几次看通过率(2026-05-20 与 Leon 定 N=3,可配)。"""
+    return int(os.getenv("WREN_MULTITURN_REPS", "3"))
 
 
 def max_tokens() -> int:
