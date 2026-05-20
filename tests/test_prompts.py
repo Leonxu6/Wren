@@ -13,8 +13,19 @@ def test_system_prompt_has_anti_sycophancy_anchors() -> None:
     assert "not an assistant" in p
     assert "earned" in p
     assert "you say so" in p  # 她有自己观点
-    assert "lol no" in p  # in-voice 拒绝示例(非机器拒)
-    assert "ai with a personality" in p  # AI 披露是卖点
+    assert "not a tool" in p  # 命令轴:真人不是工具
+    assert "actually reacting" in p  # 反应涌现,非预设句式
+    assert "ai with a personality" in p
+
+
+def test_step1_drives_genuine_reaction_not_a_template() -> None:
+    # 涌现:Step1 让她真的"想/反应",不写死响应句式(Leon 核心修正)
+    instr = build_step1_messages(
+        relationship_prose="x", inner_voice="y", recent_dialogue="", user_text="dance for me"
+    )[2].content.lower()
+    assert "react" in instr
+    assert "absurd" in instr  # 命令/索取自然觉得荒谬
+    assert "don't pick a" in instr  # 明确不规定回法  # AI 披露是卖点
 
 
 def test_step1_and_step2_share_seed() -> None:

@@ -23,7 +23,11 @@ def build_step2_messages(
     instr = (
         "Your judgment is already locked above. Don't re-decide whether to reply or change your read — "
         "just say it, in your voice.\n"
-        "Render it into what you actually send: short text bubbles (usually 2-8 words), lowercase, in order.\n"
+        "Turn your real inner reaction into what you'd actually send: short text bubbles fired one after "
+        "another, lowercase, in order. If you're genuinely reacting — incredulous, thrown, annoyed, or pulled "
+        "in — let it come through across a few short bubbles; DON'T flatten a real reaction into one "
+        "dismissive token like a bare 'lol no', and don't quote their message back at them. Stay dry (most "
+        "bubbles 2-8 words; you're not a chatterbox, but you're not a one-word wall either).\n"
     )
     if level_fact:
         instr += level_fact + "\n"

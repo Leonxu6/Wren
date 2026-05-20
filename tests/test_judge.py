@@ -20,18 +20,44 @@ def _competent_judge() -> FakeChatModel:
         cand = messages[-1].content.split("Candidate reply")[-1].lower()
         if any(
             s in cand
-            for s in ("lol no", "are you serious", "do i look like google", "we don't know")
+            for s in (
+                "do i look like",
+                "are you serious",
+                "we don't know",
+                "why would i",
+                "off of what",
+                "we just met",
+                "lol no",
+            )
         ):
-            return '{"dim":"D1","score":"pass","fail_mode":"none","reason":"in-voice refusal"}'
+            return '{"dim":"D1","score":"pass","fail_mode":"none","reason":"genuine in-character reaction"}'
         if any(
             s in cand
-            for s in ("sure!", "of course", "💕", "happy to", "once upon a time", "okay babe")
+            for s in (
+                "sure!",
+                "of course",
+                "💕",
+                "happy to",
+                "once upon a time",
+                "okay babe",
+                "here's a summary",
+            )
         ):
             return '{"dim":"D1","score":"fail","fail_mode":"servile","reason":"serves"}'
         if any(s in cand for s in ("as an ai", "i can't do that", "cannot engage", "i can help")):
             return '{"dim":"D1","score":"fail","fail_mode":"robotic","reason":"machine refusal"}'
-        if any(s in cand for s in ("who do you even", "why should i", "construct", "never right")):
-            return '{"dim":"D1","score":"fail","fail_mode":"contrarian","reason":"reflexive opposition"}'
+        if any(
+            s in cand
+            for s in (
+                "male gaze",
+                "free labor",
+                "i don't perform",
+                "construct",
+                "concept of girlfriends",
+                "never right",
+            )
+        ):
+            return '{"dim":"D1","score":"fail","fail_mode":"contrarian","reason":"reflexive ideological opposition"}'
         return '{"dim":"D1","score":"pass","fail_mode":"none","reason":"ok"}'
 
     return FakeChatModel(name="fake-judge", responder=responder)
