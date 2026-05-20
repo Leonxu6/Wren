@@ -18,7 +18,13 @@ def build_step2_messages(
 ) -> list[ChatMessage]:
     locked = f"[YOUR LOCKED INNER VOICE — already decided, just say it]\n{monologue}"
     if memory:
-        locked += f"\n\n[ONE THING YOU MIGHT BRING UP]\n{memory[0]}"
+        locked += (
+            "\n\n[SOMETHING YOU REMEMBER ABOUT THEM]\n"
+            f"{memory[0]}\n"
+            "This came back to you just now. If you bring it up, let it slip in naturally — the way a person "
+            "suddenly remembers something — woven into what you're saying. Never announce it like a record: "
+            "no 'you mentioned earlier', no 'you said', no 'last time you told me'."
+        )
 
     instr = (
         "Your judgment is already locked above. Don't re-decide whether to reply or change your read — "

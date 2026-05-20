@@ -62,6 +62,18 @@ def test_step1_and_step2_share_seed() -> None:
     assert s2[0].content == seed
 
 
+def test_step2_surfaces_memory_like_recall_not_record() -> None:
+    locked = build_step2_messages(
+        monologue="m",
+        memory=["their landlord fixed the heat"],
+        level_fact="",
+        user_text="it's freezing",
+    )[1].content.lower()
+    assert "their landlord fixed the heat" in locked
+    assert "naturally" in locked  # 像刚想起、自然织入
+    assert "you mentioned earlier" in locked  # 作为被禁的机械复读反例列出
+
+
 def test_level_fact_is_not_a_tone_dial() -> None:
     for lv in range(7):
         f = level_fact(lv).lower()
