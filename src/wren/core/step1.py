@@ -1,6 +1,6 @@
-"""Step1:涌现内心(cheap call)。唯一两结构化读数 = 回不回/延迟 + 一条印象。
+"""Step1:涌现内心(cheap call)。结构化读数 = 回不回/延迟 + 印象 + 0-1 召回 + 可选一条值得记住的事(中期记忆)。
 
-红线:不另立姿态/踩雷/lockout 字段(踩雷活在独白里涌现);判断先于措辞;沉默是头等 branch。
+红线:不另立姿态/踩雷/lockout 字段(踩雷活在独白里涌现);记忆涌现自同一 call、非全量记录(§0①);判断先于措辞;沉默是头等 branch。
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ class Step1Result:
     delay_s: int
     impression: str | None
     selected_memory: list[str]  # 0-1 条传给 Step2(反污染)
+    event_to_store: dict[str, str] | None  # 涌现的「值得记住的事」→ events.md(可空)
     raw: str
     model: str
     tokens: int | None
@@ -30,6 +31,7 @@ def run_step1(ctx: TurnContext, model: ChatModel) -> Step1Result:
     msgs = build_step1_messages(
         relationship_prose=ctx.relationship.prose,
         inner_voice=ctx.inner_voice,
+        events=ctx.events,
         recent_dialogue=ctx.recent_dialogue,
         user_text=ctx.user_text,
     )
@@ -43,6 +45,7 @@ def run_step1(ctx: TurnContext, model: ChatModel) -> Step1Result:
         delay_s=d["delay_s"],
         impression=d["impression"],
         selected_memory=d["memory"],
+        event_to_store=d["event"],
         raw=out.text,
         model=out.model,
         tokens=out.completion_tokens,

@@ -21,17 +21,41 @@ def test_system_prompt_has_anti_sycophancy_anchors() -> None:
 def test_step1_drives_genuine_reaction_not_a_template() -> None:
     # 涌现:Step1 让她真的"想/反应",不写死响应句式(Leon 核心修正)
     instr = build_step1_messages(
-        relationship_prose="x", inner_voice="y", recent_dialogue="", user_text="dance for me"
+        relationship_prose="x", inner_voice="y", events="", recent_dialogue="", user_text="dance for me"
     )[2].content.lower()
     assert "react" in instr
     assert "absurd" in instr  # 命令/索取自然觉得荒谬
     assert "don't pick a" in instr  # 明确不规定回法  # AI 披露是卖点
 
 
+def test_step1_injects_events_and_memory_instructions() -> None:
+    # 中期记忆注入 Step1(反污染:只进 Step1);写侧 + 召回两件事都在指令里,且不写死句式
+    msgs = build_step1_messages(
+        relationship_prose="x",
+        inner_voice="y",
+        events="- [heat|neutral|low] landlord fixed the heat",
+        recent_dialogue="",
+        user_text="it's freezing",
+    )
+    ctx = msgs[1].content
+    assert "things you know about this person" in ctx.lower()
+    assert "landlord fixed the heat" in ctx
+    instr = msgs[2].content.lower()
+    assert "recall" in instr and "keep" in instr  # 召回 + 写侧
+    assert "don't force" in instr  # 不硬捞(voice-emerges:描述质感非句式)
+
+
+def test_step1_events_empty_shows_placeholder() -> None:
+    msgs = build_step1_messages(
+        relationship_prose="x", inner_voice="y", events="", recent_dialogue="", user_text="hi"
+    )
+    assert "(nothing yet)" in msgs[1].content
+
+
 def test_step1_and_step2_share_seed() -> None:
     seed = build_wren_system_prompt()
     s1 = build_step1_messages(
-        relationship_prose="x", inner_voice="y", recent_dialogue="", user_text="hi"
+        relationship_prose="x", inner_voice="y", events="", recent_dialogue="", user_text="hi"
     )
     s2 = build_step2_messages(monologue="m", memory=[], level_fact="", user_text="hi")
     assert s1[0].content == seed

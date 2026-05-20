@@ -1,4 +1,4 @@
-"""Step1 prompt:涌现内心独白 + 唯一两结构化读数(回不回/延迟 + 印象)。判断先于措辞。"""
+"""Step1 prompt:涌现内心独白 + 结构化读数(回不回/延迟 + 印象 + 0-1 召回 + 可选一条值得记住的事)。判断先于措辞。"""
 
 from __future__ import annotations
 
@@ -30,24 +30,36 @@ moment. If you're even slightly unsure, you REPLY (coldly). Do not leave someone
 they said is weird or basic.
 2. If you reply, how long would you sit on it first (seconds)?
 3. Your honest read on this person right now (one short note), if anything shifted.
-4. At most ONE thing from memory worth surfacing when you speak. Usually none.
+4. Memory — recall: looking at what you already know about them (the block above), is there AT MOST ONE thing \
+genuinely worth bringing up right now, because it truly connects to this moment? Usually none. Don't force a \
+callback and don't recite a list — only what would actually surface in your head, the way you'd suddenly \
+remember something about someone.
+5. Memory — keep: did they just reveal something concrete about their own life that you'd genuinely carry — the \
+kind of specific thing a real person remembers about someone (a fixed heater, a new dog, their mom visiting, a \
+show they're in)? Most messages leave nothing. Skip filler, small talk, and your own feelings — only their real, \
+specific facts. If so, note it: a 1-2 word topic, whether it's good / bad / neutral for them, and how much it'd \
+stick (low / med / high).
 
 Output ONLY a JSON object:
 {"monologue": "<your real, unfiltered inner reaction, lowercase>", "reply": <true|false>, \
 "delay_s": <integer seconds>, "impression": "<one short in-character note, or empty>", \
-"memory": [<0 or 1 short string>]}"""
+"memory": [<0 or 1 short string you'd actually bring up now>], \
+"event": <null, or {"text": "<the concrete thing about them, lowercase>", "topic": "<1-2 words>", \
+"valence": "pos|neg|neutral", "salience": "low|med|high"}>}"""
 
 
 def build_step1_messages(
     *,
     relationship_prose: str,
     inner_voice: str,
+    events: str,
     recent_dialogue: str,
     user_text: str,
 ) -> list[ChatMessage]:
     ctx = (
         f"[YOUR CURRENT RELATIONSHIP WITH THIS PERSON]\n{relationship_prose}\n\n"
         f"[YOUR INNER VOICE RIGHT NOW]\n{inner_voice}\n\n"
+        f"[THINGS YOU KNOW ABOUT THIS PERSON]\n{events or '(nothing yet)'}\n\n"
         f"[RECENT MESSAGES]\n{recent_dialogue or '(none yet)'}"
     )
     return [
@@ -56,6 +68,21 @@ def build_step1_messages(
         ChatMessage(role="system", content=_STEP1_INSTRUCTION),
         ChatMessage(role="user", content=user_text),
     ]
+
+
+def _parse_event(raw: Any) -> dict[str, str] | None:
+    """涌现的『值得记住的事』(可空)。text 空 → None;标签缺省给保守默认。"""
+    if not isinstance(raw, dict):
+        return None
+    text = str(raw.get("text", "")).strip()
+    if not text:
+        return None
+    return {
+        "text": text,
+        "topic": str(raw.get("topic", "")).strip() or "misc",
+        "valence": str(raw.get("valence", "")).strip() or "neutral",
+        "salience": str(raw.get("salience", "")).strip() or "low",
+    }
 
 
 def parse_step1(text: str) -> dict[str, Any]:
@@ -69,4 +96,5 @@ def parse_step1(text: str) -> dict[str, Any]:
         "delay_s": int(data.get("delay_s", 0) or 0),
         "impression": impression_raw or None,
         "memory": memory,
+        "event": _parse_event(data.get("event")),
     }

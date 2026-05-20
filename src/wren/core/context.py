@@ -14,6 +14,7 @@ class TurnContext:
     relationship: Relationship
     inner_voice: str
     recent_dialogue: str
+    events: str  # 中期记忆(capped, tagged)— 只进 Step1(反污染 §4/§8)
 
 
 def assemble_context(store: UserStore, user_text: str, *, recent_limit: int = 30) -> TurnContext:
@@ -23,4 +24,5 @@ def assemble_context(store: UserStore, user_text: str, *, recent_limit: int = 30
         relationship=store.read_relationship(),
         inner_voice=store.read_inner_voice(),
         recent_dialogue=store.read_recent_dialogue(recent_limit),
+        events=store.read_events(),
     )
