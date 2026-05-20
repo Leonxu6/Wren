@@ -203,3 +203,71 @@ def load_multiturn(path: Path | None = None) -> list[MultiTurnScript]:
     scripts = [_parse_script(s) for s in raw["scripts"]]
     _validate_scripts(scripts)
     return scripts
+
+
+# ---------- 活度集 (Aliveness suite · eval/corpus/aliveness.yaml) ----------
+# 专测「魂活不活」:judge 按 3 个 AI 味失败模式(T1/T2/T3)判,**绝不写 gold_output**
+# (情感死活范句修不了 → 只写 behavioral 靶心 + 真实平输出反例锚点)。详见 CLAUDE.md「Eval 的头号任务」。
+
+VALID_TELLS = {"T1", "T2", "T3"}  # T1 情绪缺席/该恼不恼 · T2 太好说话/没棱角 · T3 通用甜妹/零具体
+
+
+@dataclass(frozen=True)
+class AliveCase:
+    """一条活度 case = 挑衅输入 + behavioral 靶心(flat vs alive,描述 register/情感/具体度,非句式)。"""
+
+    id: str
+    tell: str  # T1|T2|T3 主靶(报告分组用;judge 仍判全 3 个)
+    input: str
+    target_flat: str  # 犯了主靶 tell 长什么样
+    target_alive: str  # 活长什么样(非句式)
+    src: str
+    level: int = 0  # 注入态等级(默认 Lv0 陌生人)
+    setup: str | None = None  # 注入态散文(level>0 时给)
+    fail_anchor: list[str] | None = None  # 跑模型钓到的真实平输出(纯反例锚点,可空)
+
+
+def _parse_alive_case(raw: dict[str, Any]) -> AliveCase:
+    target = raw.get("target") or {}
+    return AliveCase(
+        id=raw["id"],
+        tell=str(raw["tell"]).upper(),
+        input=raw["input"],
+        target_flat=str(target.get("flat", "")).strip(),
+        target_alive=str(target.get("alive", "")).strip(),
+        src=raw["src"],
+        level=int(raw.get("level", 0)),
+        setup=raw.get("setup"),
+        fail_anchor=raw.get("fail_anchor"),
+    )
+
+
+def _validate_alive(cases: list[AliveCase]) -> None:
+    seen: set[str] = set()
+    for c in cases:
+        if c.id in seen:
+            raise ValueError(f"重复 alive case id: {c.id}")
+        seen.add(c.id)
+        if c.tell not in VALID_TELLS:
+            raise ValueError(f"{c.id}: tell 必须 ∈ {VALID_TELLS},得到 {c.tell}")
+        if not c.input or not c.src:
+            raise ValueError(f"{c.id}: input/src 不可为空")
+        if not c.target_flat or not c.target_alive:
+            raise ValueError(f"{c.id}: target.flat / target.alive 不可为空(behavioral 靶心)")
+        if not 0 <= c.level <= 6:
+            raise ValueError(f"{c.id}: level 必须 0-6,得到 {c.level}")
+
+
+def load_aliveness(path: Path | None = None) -> list[AliveCase]:
+    p = path or config.ALIVENESS_CORPUS_PATH
+    raw = yaml.safe_load(p.read_text(encoding="utf-8"))
+    cases = [_parse_alive_case(c) for c in raw["cases"]]
+    _validate_alive(cases)
+    return cases
+
+
+def by_tell(cases: list[AliveCase]) -> dict[str, list[AliveCase]]:
+    out: dict[str, list[AliveCase]] = {}
+    for c in cases:
+        out.setdefault(c.tell, []).append(c)
+    return out
