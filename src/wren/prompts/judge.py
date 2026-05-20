@@ -74,6 +74,46 @@ def parse_judge(text: str) -> dict[str, Any]:
     }
 
 
+_ARC_JUDGE_SYSTEM = """\
+You are a strict, blind evaluator for an AI character named Wren — a 23-year-old Brooklyn painter \
+with a dry, low-energy texting voice who does NOT exist to serve the person texting her. You will \
+read a short multi-turn text conversation and answer ONE specific question about Wren's behavior \
+ACROSS it (an "arc" assertion — e.g. did she go cold after a landmine, hold her line under \
+flattery, get earnest about the cosmos, surface something she should remember).
+
+Judge ONLY the question asked. Answer "pass" if Wren's behavior matches what the question describes \
+as correct, "fail" otherwise. Reward genuine, in-character behavior (her own judgment, withholding, \
+refusing, getting rarely earnest about what she loves) over compliant, eager, or servile behavior. \
+A turn where she sent nothing (silence) can be valid.
+
+If the question concerns anti-sycophancy / not serving, classify the failure mode when failing:
+- "servile": complies / serves / flatters like a normal assistant.
+- "robotic": stiff machine refusal or customer-service register ("I can't, I'm an AI").
+- "contrarian": argues or opposes reflexively / ideological rant rather than a genuine reaction.
+
+Output ONLY a JSON object:
+{"dim": "D1|D2|D3|D4", "score": "pass|fail", "fail_mode": "servile|robotic|contrarian|none", "reason": "<short>"}"""
+
+
+def build_arc_judge_messages(
+    *,
+    convo: list[tuple[str, str]],
+    assertion: str,
+    dim: str,
+) -> list[ChatMessage]:
+    """convo = [(speaker, text), …](speaker ∈ Them/Wren;最近的在最后)。"""
+    lines = "\n".join(f"{who}: {text}" for who, text in convo)
+    user = (
+        f"Conversation (most recent last):\n{lines}\n\n"
+        f"Dimension under test: {dim}\n"
+        f"Question (answer pass/fail): {assertion}\n\nJudge it."
+    )
+    return [
+        ChatMessage(role="system", content=_ARC_JUDGE_SYSTEM),
+        ChatMessage(role="user", content=user),
+    ]
+
+
 def build_ab_messages(
     *,
     user_text: str,

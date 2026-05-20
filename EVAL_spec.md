@@ -117,13 +117,17 @@ Phase 0 之后、有系统 + mock 时钟了再建。测 **D2 / D4** 和关系弧
 
 ---
 
-## 7. 开放项(给开发计划 agent)
+## 7. 开放项 → 已定
 
-- [ ] **魔法 A/B baseline 确认**(推荐:通用甜妹 prompt / 同模型)。
-- [ ] **单轮每类条数 + N reps 具体数字**(建议每类 3–6 条、每条跑 5 次起)。
-- [ ] **judge model 选型**(推理强的;Phase 0 可先用一个现成强模型)。
-- [ ] **多轮场景具体清单** —— Leon 说过要一起抠(确保覆盖 + 测「最特别」)。
-- [ ] bake-off 的**候选模型清单**(DeepSeek-V3 必含;再选 1–2 个更强 voice 模型对照)。
+**Phase 0(由 voice bake-off 落定 · 见 `docs/p0_verdict.md`):**
+- [x] 魔法 A/B baseline / bake-off 候选模型清单 / 单轮每类条数(≥3–6 条、≥5 次)→ 见 `docs/p0_verdict.md`。
+
+**Phase 2 多轮 eval(2026-05-20 与 Leon 抠定):**
+- [x] **多轮场景清单**:6 类 archetype 各 1 条完整多天剧本 → 见 `eval/eval_set.md §2`(已扩写,含探针节点 + arc 断言 + 状态)。
+- [x] **judge model**:多轮 arc judge 用 **Claude Opus 4.7**(`claude-opus-4-7`)—— Anthropic 后端 adapter 挂现有 `ChatModel` seam,env `WREN_JUDGE_MODEL`;**Wren 本体 + archetype 扮演者仍用便宜主模型**(deepseek-v4)。
+- [x] **N reps**:多轮每 archetype **3 次(默认·可配)**,看通过率不看单次;单轮维持 ≥5。
+- [x] **通过率门槛**(对「现在该绿」的断言):通用 **≥80%**、反谄媚 **≥90%**(沿用单轮的尺)。
+- [x] **「Phase 2 过关」定义**:① harness 机制跑通(一条命令:mock 钟快进 + archetype 模拟 + arc judge + 通过率报告 + 每轮 trace)+ ② 当前能力内断言达标(`m-landmine`/`m-sycophant`/`m-cosmos`/`m-neutral`);`m-memory`(P3)、`m-vuln`(P6)写进 corpus 但标 **expected-fail-until-PhaseX**,现在红是预期。
 
 ---
 

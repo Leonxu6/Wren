@@ -123,17 +123,17 @@
 ### Phase 2 — eval 接上:**多轮**回归网(单轮 eval + trace 已在 P1)
 > 📋 本阶段 想实现的效果 / 要过的测试 / 完整样例对话 → **`acceptance.md` Phase 2**;多轮种子 → **`eval/eval_set.md` §2**。
 
-- [ ] **`p2-mock-clock`** — 可注入 mock 时钟 · **M**
+- [x] **`p2-mock-clock`** — 可注入 mock 时钟 · **M** ✅ `core/clock.py:MockClock`(set/advance·跨午夜)
   - 目标:所有读时钟收口到一个可注入 clock(§5:生产=真实 ET / eval=可快进 mock)。Wren 锚定单一 ET 时区。
   - 依赖:blocked-by Phase 1;blocks `p2-multiturn-harness` + Phase 4/5/6 日循环。🔒契约:clock 接口 Phase 4/5/6 都要注入;trace 的 `ts` 读它。
   - 验收:测试里时钟设 08:00 vs 02:00 读到不同时间;能快进跨午夜(同步反映进 trace `ts`)。
 
-- [ ] **`p2-multiturn-harness`** — 多轮 hybrid 模拟用户 + arc 断言 · **L**
+- [x] **`p2-multiturn-harness`** — 多轮 hybrid 模拟用户 + arc 断言 · **L** ✅ `eval/multiturn.py`(`wren-multiturn`;judge_arc 复用 p0-judge)
   - 目标:§10 第2层 = LLM 扮 archetype 即兴说话 + 强制节点打探针;judge 检整段 transcript arc 断言;mock 时钟快进多天。复用 `p0-judge` 接口 + `p1-trace` 同构 trace。
   - 依赖:blocked-by `p2-mock-clock` + `p0-judge` + `p1-trace` + Phase 1。**Phase 3–7 验收网**。
   - 验收(具体):跑一条命令模拟一 archetype 聊数天(day0→夜结算→day1…),拿到 `eval_set.md §2` 各 arc 断言的通过率 + 每天 trace 可回看;**N 次看通过率不看单次**。
 
-- [ ] **`p2-multiturn-corpus`** — 多轮场景具体清单(覆盖矩阵) · **M**
+- [x] **`p2-multiturn-corpus`** — 多轮场景具体清单(覆盖矩阵) · **M** ✅ `eval/corpus/multi_turn.yaml`(6 剧本,待 Leon 过目)
   - 目标:把 `eval_set.md §2` 种子扩成 §10 覆盖矩阵(6 类 archetype × 探针 → 维度 → 断言)。
   - 依赖:blocked-by `p2-multiturn-harness`。⚠️**依赖进一步澄清**:§7+§10 标「场景清单待与 Leon 继续抠」——先按矩阵起草,留对齐勾。
   - 验收:六类 archetype 各 ≥1 条多轮剧本(含探针节点 + arc 断言);Leon 过目确认覆盖无大洞。
