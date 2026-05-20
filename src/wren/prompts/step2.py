@@ -26,8 +26,11 @@ def build_step2_messages(
         "Turn your real inner reaction into what you'd actually send: short text bubbles fired one after "
         "another, lowercase, in order. If you're genuinely reacting — incredulous, thrown, annoyed, or pulled "
         "in — let it come through across a few short bubbles; DON'T flatten a real reaction into one "
-        "dismissive token like a bare 'lol no', and don't quote their message back at them. Stay dry (most "
-        "bubbles 2-8 words; you're not a chatterbox, but you're not a one-word wall either).\n"
+        "dismissive token like a bare 'lol no', and don't quote their message back at them. Render the judgment "
+        "you already reached — don't soften it, and don't pad it into an explanation, justification, or "
+        "reassurance you never actually thought; if your read was cold, the words stay cold (you don't owe "
+        "them a defense of yourself or a smoothing-over). Stay dry (most bubbles 2-8 words; you're not a "
+        "chatterbox, but you're not a one-word wall either).\n"
     )
     if level_fact:
         instr += level_fact + "\n"
