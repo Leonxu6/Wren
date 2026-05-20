@@ -111,6 +111,15 @@ def test_improvise_step_uses_simulator(data_root: Path) -> None:
     assert run.steps[0].user_text == "hey what's up"  # 来自模拟器,非强制 probe
 
 
+def test_no_judge_produces_transcript_without_judging(data_root: Path) -> None:
+    script = {s.id: s for s in load_multiturn()}["m-cosmos"]
+    fake = _fake()
+    run = run_script(script, "eval-nj-t", gen_model=fake, sim_model=fake, judge_model=None, root=data_root)
+    assert run.assertions == []  # 没判
+    assert len(run.steps) == len(script.steps)  # 但对话照产
+    assert read_traces(run.trace_path.parent)  # trace 照落
+
+
 # ---------- 聚合 + 门槛(纯函数)----------
 
 

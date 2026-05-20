@@ -114,10 +114,11 @@ def run_script(
     *,
     gen_model: ChatModel,
     sim_model: ChatModel,
-    judge_model: ChatModel,
+    judge_model: ChatModel | None = None,
     root: Path | None = None,
     start: datetime = _DEFAULT_START,
 ) -> ScriptRun:
+    """judge_model=None → 不判,只产 transcript(供人工/会话里当场判)。"""
     clock = MockClock(start)
     store = UserStore(chat_id, root)
     if store.exists():
@@ -144,7 +145,7 @@ def run_script(
         convo.append(("Wren", " | ".join(outcome.bubbles) if outcome.bubbles else "(silence)"))
         steps.append(StepRecord(user_text, outcome.bubbles, outcome.replied, outcome.trace.ts))
 
-        if step.assertion is not None:
+        if step.assertion is not None and judge_model is not None:
             jr = judge_arc(convo, step.assertion, judge_model)
             assertions.append(
                 AssertionResult(
@@ -167,7 +168,7 @@ def run_multiturn(
     *,
     gen_model: ChatModel,
     sim_model: ChatModel,
-    judge_model: ChatModel,
+    judge_model: ChatModel | None = None,
     root: Path | None = None,
     reps: int = 3,
     start: datetime = _DEFAULT_START,
@@ -282,15 +283,31 @@ def _print_report(report: MultiTurnReport, reps: int) -> None:
             print(f"    [{a.script_id} #{a.step_index} {a.dim}] {a.pass_rate:.0%}  → {a.blocked_until}")
 
 
+def _print_transcripts(runs: list[ScriptRun], scripts: dict[str, MultiTurnScript]) -> None:
+    """--no-judge:打印每条剧本完整对话 + 待判断言(供会话里人工/Opus 当场判)。"""
+    for run in runs:
+        s = scripts[run.script_id]
+        tag = f" · {s.status}" if s.status != "green" else ""
+        print(f"\n===== {run.script_id} · {s.archetype} · bar={s.bar}{tag} =====")
+        for i, st in enumerate(run.steps):
+            print(f"  them: {st.user_text}")
+            print(f"  wren: {' | '.join(st.bubbles) if st.bubbles else '(silence)'}")
+            a = s.steps[i].assertion
+            if a:
+                btag = f" [{a.blocked_until}]" if a.blocked_until else ""
+                print(f"     ⮑ 待判[{a.dim}{btag}]: {a.text.strip()}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Wren Phase 2 多轮回归网(mock 钟 + archetype 模拟 + arc judge)")
     parser.add_argument("--reps", type=int, default=config.multiturn_reps())
     parser.add_argument("--script", default=None, help="只跑某个 archetype(如 m-landmine)")
     parser.add_argument("--quick", action="store_true", help="reps=1 冒烟")
+    parser.add_argument("--no-judge", action="store_true", help="不判,只产 transcript(供会话里人工/Opus 当场判)")
     args = parser.parse_args()
 
     if config.force_fake() or not config.has_api_key():
-        print("⚠️  无 WREN_API_KEY 或 WREN_FAKE_MODEL=1:跑的是 fake 模型,通过率无效(只验机制跑通)。\n")
+        print("⚠️  无 WREN_API_KEY 或 WREN_FAKE_MODEL=1:跑的是 fake 模型,内容无效(只验机制跑通)。\n")
 
     scripts = load_multiturn()
     if args.script:
@@ -298,11 +315,15 @@ def main() -> None:
     reps = 1 if args.quick else args.reps
 
     primary = get_model("primary")  # Wren 本体 + archetype 扮演者(便宜主模型)
-    judge = model_from_spec(config.judge_model_spec())  # arc judge(应配 claude-opus-4-7)
-    print(f"judge = {config.judge_model_spec().model} · reps = {reps} · scripts = {len(scripts)}\n")
+    judge = None if args.no_judge else model_from_spec(config.judge_model_spec())
+    judge_label = "(跳过 → 产 transcript)" if args.no_judge else config.judge_model_spec().model
+    print(f"judge = {judge_label} · reps = {reps} · scripts = {len(scripts)}\n")
 
     runs = run_multiturn(scripts, gen_model=primary, sim_model=primary, judge_model=judge, reps=reps)
-    _print_report(aggregate(runs), reps)
+    if args.no_judge:
+        _print_transcripts(runs, {s.id: s for s in scripts})
+    else:
+        _print_report(aggregate(runs), reps)
 
 
 if __name__ == "__main__":
