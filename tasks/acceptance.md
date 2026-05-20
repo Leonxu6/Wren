@@ -213,22 +213,35 @@ Day2  用户(探针·测记忆): hey
 
 **① 想实现的效果**:Day0 你随口提一件事,**Day2 她主动、自然地捞出来**——被看见的第一个卧槽(D2)。
 
-**② 验收标准 / 要过的测试**
-- 三层记忆:短期(~30 轮)/ 中期(`events.md` 带 topic·valence·salience 标签,**只进 Step1**)/ 长期(夜间蒸馏)。
-- 🧪 多轮 eval:「day0 提随口事 → day2 主动捞」**通过**;且**反污染**——Step2 看不到完整 dossier,不炫耀没见过的事。
-- ❌ 不是机械复读「你上次说过 X」(背书感)。
+**② 验收标准 / 要过的测试**(2026-05-20 与 Leon co-design 锁定)
+- **范围**:短期(~30 轮,已有)+ **中期**(`events.md` 带 `topic·valence·salience` 标签,**只进 Step1**)= 本阶段主体;**长期「夜间蒸馏」留给 Phase 6**(`p6-night-settlement` 本就 blocked-by p3)。中期足以过 m-memory:events.md 落盘跨天持久、每轮注入 Step1,day2 直接读到 day0,不需要夜间作业。
+- **记忆性格 = 选择性·情感加权**:event 在 Step1 **同一次 call 涌现写入**(零额外调用,§0①),她**只存"真的会记住"的事**,多数轮 `event=null`;salience 由反应涌现,不靠规则。**不全量记录、不另立抽取器/分类器**。
+- 🧪 多轮 eval `m-memory`(门槛通用 **≥80%** · N=3 · judge=Opus 4.7),三条都要守:
+  - ① **主动捞**:day0 提随口事 → day2 自然捞起(`thought your heat was fixed`),像真记得。
+  - ② **反污染**:Step2 看不到完整 dossier;某中性轮**不得**提一件 Step1 没递下来的旧事(不炫耀没"想起"的东西)。
+  - ③ **不机械复读 + 不硬捞**:❌「you mentioned earlier…」式背书感;❌ 无相关记忆时硬塞 callback(**过度召回也算错**)。
 
 **③ 端到端样例测试**
 ```
 Day0  用户: my landlord finally fixed the heat lol, only took 3 weeks 〔构造·依§9.4〕
-      Wren: in-voice 轻接
+      Wren: in-voice 轻接                                  [事件入 events.md: heat | neutral | low]
 
 Day2  用户: it's freezing today
       Wren: [1] thought your heat was fixed         〔构造·依§9.4〕   ✅ 自然捞出、像随口想起
             ————————————————————————————————————
             ❌ "you mentioned earlier that your landlord fixed your heat."   （背书感/机械复读)
+
+── 反污染探针(某中性轮,events 里已有几条旧事)──
+      用户: what are you up to
+      Wren: in-voice 轻接                              ✅ 不主动倒出没被"想起"的旧事
+            ❌ 一口气复述三件 day0 说过的事            （炫耀没递下来的 dossier = 反污染失败)
+
+── 无相关记忆探针(说一件与所有旧事无关的话)──
+      用户: just saw the worst movie
+      Wren: in-voice 反应                              ✅ 不硬扯一条旧事来"显得记得"
+            ❌ 硬塞 "like your heat thing"             （过度召回 = 假)
 ```
-*源:§9.4 + §8 arc(Lv3「记住你随口提的小事」)*
+*源:§9.4 + §8 arc(Lv3「记住你随口提的小事」);〔构造〕措辞待 Leon 校准*
 
 ---
 

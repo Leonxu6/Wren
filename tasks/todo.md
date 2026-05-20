@@ -139,13 +139,13 @@
   - 验收:六类 archetype 各 ≥1 条多轮剧本(含探针节点 + arc 断言);Leon 过目确认覆盖无大洞。
 
 ### Phase 3 — 记忆:命中 Day2「她记住你」
-> 📋 想实现的效果 / 测试 / 完整样例对话 → **`acceptance.md` Phase 3**。
+> 📋 想实现的效果 / 测试 / 完整样例对话 → **`acceptance.md` Phase 3**;开工卡(顺序+契约+seam)→ **`tasks/phase3.md`**。
 
-- [ ] **`p3-memory`** — 三层记忆 + 标签(全量 capped 注入 Step1) · **L**
-  - 目标:§8 — 短期(~30轮)/ 中期(`events.md` 带 topic·valence·salience 标签,**只进 Step1**)/ 长期(夜间蒸馏)。MVP 全量 capped 注入 Step1,Step1 判相关性、只把 0–1 条传 Step2。
+- [ ] 🟡 **`p3-memory`** — 中期记忆(`events.md` 标签 → 注入 Step1) · **L** · worktree `p3-memory`(开工中)
+  - 目标:§8 — 短期(~30 轮,**已有**)+ **中期**(`events.md` 带 `topic·valence·salience` 标签,**只进 Step1**)= 本阶段主体;Step1 判相关性、只把 0–1 条传 Step2。**长期「夜间蒸馏」是 seam → Phase 6**(范围决策见 `phase3.md`)。
   - 依赖:blocked-by Phase 1(storage events stub)+ Phase 2(`m-memory` 多轮验收)。
-  - 红线:**反污染 = 记忆只进 Step1**(§4/§8);**非 RAG**;留 seam(标签做夜间蒸馏 + 关键词召回)。
-  - 验收:🧪 `eval_set.md m-memory` 通过 —— day0 提随口事、day2 她主动自然捞出(`thought your heat was fixed`),❌ 非机械复读「你上次说过 X」。
+  - 红线:**反污染 = 记忆只进 Step1**(§4/§8);**非 RAG**;**涌现写侧·选择性**(同一 call 涌现,不另立抽取器、不全量记录,§0①);留 seam(标签做夜间蒸馏 + 关键词召回)。
+  - 验收:🧪 `m-memory`(扩充版:① 主动捞 + ② 反污染 + ③ 不机械复读/不硬捞;门槛 ≥80%·N=3·judge=Opus 4.7)通过 —— 详 `acceptance.md` Phase 3 §②。
 
 ### Phase 4 — world / 因果链:「她有自己的生活」
 > 📋 想实现的效果 / 测试 / 完整样例对话 → **`acceptance.md` Phase 4**。
