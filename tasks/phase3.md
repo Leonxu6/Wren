@@ -62,9 +62,10 @@
 
 ## 怎么跑 / 验证
 ```bash
-# 离线机制(无 key):全确定性
-WREN_FAKE_MODEL=1 uv run wren-multiturn --script m-memory
-uv run ruff check src tests && uv run mypy src && uv run pytest -q
+# 离线机制内容(无 key · 确定性):pytest 把「写→注入→召回(selected_memory)→surface」证死
+uv run ruff check src tests && uv run mypy src && uv run pytest -q   # 含 tests/test_memory_flow.py
+# 注:WREN_FAKE_MODEL=1 wren-multiturn 只验循环 plumbing —— fake 默认输出空、通过率无效、不验内容
+WREN_FAKE_MODEL=1 uv run wren-multiturn --script m-memory   # 仅看 harness 跑通,不当机制验证
 
 # 真·通过率(需 deepseek 主模型 + Opus judge):
 WREN_API_KEY=<deepseek> WREN_JUDGE_MODEL=claude-opus-4-7 \
@@ -89,5 +90,10 @@ uv run wren-bot   # @Her3636bot
 - ✅ **机制全通**:capture(选择性存「heat 修好」「sister 借住」,跳过 filler/她自己的反应)→ inject(`[THINGS YOU KNOW]` 进 Step1)→ select(Step1 出 0–1 召回)→ surface(Step2 自然说,非机械复读)。
 - ✅ ② 反污染 **5/5**、③ 不硬捞 **5/5**(中性/无关轮不倒旧事、不硬塞 callback)。
 - ⚠️ ① **间接召回 = 模型能力门槛(§15#4)**:v4-flash **~0/5**(做不出 freezing→heat 跨话题联想;用「cold→heating」示例诱导 = teaching-the-test,撤掉即归零),**v4-pro 2/2**(自然 `thought the heat was fixed`)。**Leon 决策(2026-05-21):保持 v4-flash + 记录限制**;① 标 `blocked_until: stronger-step1-model`(不计门槛),换更强 Step1 模型应转绿。
+
+**2026-05-21 audit 修复(Leon 复核后)**:
+- **离线机制据实**:`tests/test_memory_flow.py` 确定性证死「写→注入→召回(selected_memory)→surface」,不再依赖会红的 CLI fake;`WREN_FAKE_MODEL=1 wren-multiturn` 文档标注为「仅 plumbing,内容空」。
+- **.env 行内注释 bug**:`.env.example` 注释移到独立行(空值行被 python-dotenv 把行内注释吞进值,数据落怪目录 `# 留空 → .`)+ `config.data_root()` 防御(注释/空值 → 回默认)+ 清垃圾目录。
+- **召回可审计 = 双通道**:显式 `selected_memory`(受审计)+ Wren 独白(她自己已过滤的想法,非原始 dossier → 不破反污染)。trace 两字段(`selected_memory` + `inner_voice_after`)共同复盘「她为什么这么说」;**不**强行把召回全挤进 `selected_memory`(模型做不稳、且压扁正当独白涌现)。`test_memory_flow` 守显式通道不空转。
 
 **留给后续**:Step1 选型(§15#4 · model-routing seam 已在,可只把 Step1 路由到强模型);长期记忆夜间蒸馏 → Phase 6;真机 `wren-bot` voice 调。
