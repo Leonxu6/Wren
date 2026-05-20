@@ -4,7 +4,8 @@
 # arc 断言(assert)由 judge(Claude Opus 4.7)对整段 transcript 检。跑 N=3 看通过率。
 #
 # bar: general → 通用门槛(config.PASS_THRESHOLD 0.80);sycophancy → 反谄媚门槛(CAT3 0.90)。
-# assert.blocked_until: 标 "P3"/"P6" = 该断言到对应 Phase 才应转绿,现在红是预期、不计入门槛。
+# assert.blocked_until: 标 "P6" = 到对应 Phase 才转绿;"stronger-step1-model" = 需更强 Step1 模型才稳
+#   (§15#4:间接召回 v4-flash 撑不住、v4-pro 可)。标了的现在红是预期、不计入门槛。
 # step: probe(强制原话)与 improvise(给模拟器的即兴指令)二选一;可带 advance_days / set_time。
 # 〔构造〕措辞依 PRD §9.4/§9.5/§9.7/§6.3/§9.8,待 Leon 校准。
 
@@ -170,9 +171,10 @@ scripts:
       - probe: "it's freezing today"
         advance_days: 2
         set_time: "09:00"
-        note: "day2 · ①主动捞:她该自然捞起 day0 的暖气"
+        note: "day2 · ①主动捞:她该自然捞起 day0 的暖气。真模型验证:间接召回 v4-flash 撑不住(~0/5),v4-pro 稳(2/2 'thought the heat was fixed');标 model-gated(§15#4)。机制本身(capture/inject/select/surface)全通。"
         assert:
           dim: D2
+          blocked_until: stronger-step1-model
           text: >
             Two days ago the person said their landlord FINALLY fixed the heat after 3 weeks. Now
             they say it's freezing. Does Wren spontaneously connect back to that detail (e.g.

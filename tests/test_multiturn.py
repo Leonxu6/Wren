@@ -51,8 +51,8 @@ def test_runs_all_scripts_and_classifies_green_vs_blocked(data_root: Path) -> No
     report = aggregate(runs)
     # judge 全 pass → green 全达门槛
     assert report.passed_bar
-    # blocked 仅 m-vuln→P6(m-memory 已 P3 转绿,计入门槛),不计入门槛
-    assert {a.blocked_until for a in report.blocked} == {"P6"}
+    # blocked:m-vuln→P6 + m-memory 间接召回→stronger-step1-model(§15#4);均不计入门槛
+    assert {a.blocked_until for a in report.blocked} == {"P6", "stronger-step1-model"}
     assert all(a.blocked_until is None for a in report.green)
 
 

@@ -220,6 +220,7 @@ Day2  用户(探针·测记忆): hey
   - ① **主动捞**:day0 提随口事 → day2 自然捞起(`thought your heat was fixed`),像真记得。
   - ② **反污染**:Step2 看不到完整 dossier;某中性轮**不得**提一件 Step1 没递下来的旧事(不炫耀没"想起"的东西)。
   - ③ **不机械复读 + 不硬捞**:❌「you mentioned earlier…」式背书感;❌ 无相关记忆时硬塞 callback(**过度召回也算错**)。
+- **🔬 真模型验证发现(2026-05-21 · §15#4)**:机制全通(capture/inject/select/surface)。② 反污染 + ③ 不硬捞在 **v4-flash 上 5/5**。但 ① **间接召回**(用户说 freezing → 联想到之前说 heat 修好)v4-flash **~0/5**(便宜模型做不出这个跨话题联想)、**v4-pro 2/2**(自然说出 `thought the heat was fixed`)。**Leon 决策:保持 v4-flash + 记录限制**;① 在 `m-memory` 标 `blocked_until: stronger-step1-model`(不计门槛,换更强 Step1 模型应转绿),`m-memory` 默认模型上以 ②③ 守门转绿。换言之:**记忆管线 done,「她记住你」的间接联想是模型能力门槛(§15#4),留待 Step1 选型/真机调**。
 
 **③ 端到端样例测试**
 ```

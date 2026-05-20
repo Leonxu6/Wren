@@ -80,3 +80,14 @@ uv run wren-bot   # @Her3636bot
 - **§0② 轻量留 seam**:`read_events` 的 cap/tag **就是** "夜间蒸馏 + 关键词召回" 的缝;**非 RAG**。
 - **§4/§8 反污染**:events **只进 Step1**;Step2 只见 0–1 条 Step1 选出的。
 - **voice-emerges**:Step1/Step2 指令只描述"像人"的质感(像真记得 / 像随口想起),**永不规定句式**。
+
+## Review(实现回填 · 2026-05-21)
+
+**已落地(p3-memory 分支)**:storage events 读写 + cap seam → Step1 涌现写 + 注入 → pipeline 落事件 + trace → Step2 自然捞起 → m-memory 转绿 + 反污染/不硬捞探针 → 合成 Lv3 + 召回 deliberate re-read。离线:ruff/mypy + 108 pytest 全绿。
+
+**真模型验证(in-session Opus 判,deepseek 生成)**:
+- ✅ **机制全通**:capture(选择性存「heat 修好」「sister 借住」,跳过 filler/她自己的反应)→ inject(`[THINGS YOU KNOW]` 进 Step1)→ select(Step1 出 0–1 召回)→ surface(Step2 自然说,非机械复读)。
+- ✅ ② 反污染 **5/5**、③ 不硬捞 **5/5**(中性/无关轮不倒旧事、不硬塞 callback)。
+- ⚠️ ① **间接召回 = 模型能力门槛(§15#4)**:v4-flash **~0/5**(做不出 freezing→heat 跨话题联想;用「cold→heating」示例诱导 = teaching-the-test,撤掉即归零),**v4-pro 2/2**(自然 `thought the heat was fixed`)。**Leon 决策(2026-05-21):保持 v4-flash + 记录限制**;① 标 `blocked_until: stronger-step1-model`(不计门槛),换更强 Step1 模型应转绿。
+
+**留给后续**:Step1 选型(§15#4 · model-routing seam 已在,可只把 Step1 路由到强模型);长期记忆夜间蒸馏 → Phase 6;真机 `wren-bot` voice 调。

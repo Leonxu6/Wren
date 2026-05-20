@@ -325,4 +325,5 @@ graph TD
 ## 6. Review(实现后回填)
 
 > 每个 phase 收尾在此追加:做了什么、eval 通过率、与计划的偏差、教训。
-- _(待 Phase 0 起跑后回填)_
+- _(Phase 0–2 回填略)_
+- **Phase 3(`p3-memory` · 2026-05-21)**:中期记忆管线落地(events 读写/cap → Step1 涌现写 + 注入 → pipeline 落盘 + trace → Step2 自然捞 → m-memory 扩充 + 合成 Lv3)。离线 108 测试绿。真模型:机制全通 + 反污染/不硬捞 **5/5**;**间接召回是 §15#4 模型门槛** —— v4-flash ~0、v4-pro 稳,Leon 定「**保持 v4-flash + 记录限制**」,召回断言标 `blocked_until: stronger-step1-model`。详 `phase3.md` Review。
