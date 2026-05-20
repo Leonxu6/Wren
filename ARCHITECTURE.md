@@ -225,8 +225,8 @@ cron 扫(每 ~10–15min)+ 规则预筛(零 LLM):频率预算 / 付费+等级门
 ## 12. 建造顺序(决策 15 · checkable)
 
 - [ ] **Phase 0 — 风险闸门**:单轮 eval(机械门 + 金标准 judge)+ **voice bake-off** → **定主模型**(掐 §15#4)
-- [ ] **Phase 1 — 垂直切片**:Telegram bot + Step1→Step2 + 单用户 markdown + Lv0 onboarding → **跑通一轮真对话**(可复用中文版架构骨架 storage/handler,content 全英文重做)
-- [ ] **Phase 2 — eval 接上**:多轮 hybrid 模拟 + mock 时钟 → 成为之后每层的回归网
+- [ ] **Phase 1 — 垂直切片**:Telegram bot + Step1→Step2 + 单用户 markdown + Lv0 onboarding → **跑通一轮真对话**(可复用中文版架构骨架 storage/handler,content 全英文重做)。**🆕 trace(每轮可观测)+ 单轮 eval 接入也在本阶段**(Leon 2026-05-20 决策:walking skeleton 不裸跑,全程可跟踪 / 可评估;eval 集见 `eval/eval_set.md`,新增 issue `p1-trace`/`p1-eval-wire`)
+- [ ] **Phase 2 — eval 接上(多轮)**:多轮 hybrid 模拟 + mock 时钟 → 成为之后每层的回归网(**单轮 eval + trace 已在 Phase 1**)
 - [ ] **Phase 3 — 记忆**:三层 + 标签 → 命中 Day2「她记住你」卧槽
 - [ ] **Phase 4 — world / 因果链**:life-sim + world/today + inner_voice 演化 → 「她有自己的生活」
 - [ ] **Phase 5 — 主动消息**:beat 投射 + cron + 轻判 + 延迟发送 → 「半夜找你」卧槽
@@ -246,6 +246,7 @@ cron 扫(每 ~10–15min)+ 规则预筛(零 LLM):频率预算 / 付费+等级门
 - [ ] **eval 具体场景清单** 与 Leon 继续抠(覆盖 + 测「最特别」)。
 - [ ] **更新 PRD**:§14.1 #11 永久 lockout → V2。
 - [ ] PRD §15 开放决策(反差爱好 / 定价 / 首发市场等)仍待 Leon 拍板。
+- ✅ **(2026-05-20 Leon 决策)trace(全程可观测)+ 单轮 eval 接入前移到 Phase 1**:§12 Phase 1 已标;eval 集见 `eval/eval_set.md`(§1 用例 / §2 多轮种子 / §3 trace 约定);`tasks/todo.md` 新增 `p1-trace` / `p1-eval-wire`;多轮 hybrid eval 仍 Phase 2。
 
 ---
 
