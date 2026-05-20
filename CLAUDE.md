@@ -4,16 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-**Pre-implementation design repo** for **"Wren"** — an English-language AI relationship-simulator delivered as a Telegram bot. Wren is a Brooklyn art-school woman with her own life and temper who *does not exist for the user*; the product is the slow, failable work of turning her from "a stranger who accepted your message request" into someone who cares about you (Lv0 stranger → Lv6 lover).
+**"Wren"** — an English-language AI relationship-simulator delivered as a Telegram bot. Wren is a Brooklyn art-school woman with her own life and temper who *does not exist for the user*; the product is the slow, failable work of turning her from "a stranger who accepted your message request" into someone who cares about you (Lv0 stranger → Lv6 lover). Ambition is deliberately small (PRD §1.3): 50–200 taste-aligned daily users, subscription — *not* growth/VC, so don't evaluate against DAU/growth frames.
 
-There is **no code yet** — only two source-of-truth documents. The ambition is deliberately small (PRD §1.3): a product Leon finds cool that 50–200 taste-aligned users use daily, monetized by subscription. *Not* growth/VC — don't evaluate it against DAU/growth frames.
+**Build state (risk-first, ARCHITECTURE §12):** Phase 0 (single-turn voice eval + bake-off), Phase 1 (Telegram walking skeleton: think→speak + per-user markdown + trace), and Phase 2 (multi-turn eval regression net) are **implemented** in `src/wren/`. Phases 3–7 (memory → world/life-sim → proactive messaging → nightly relationship settlement → Lv4 vulnerability) are **not built yet** — multi-turn eval assertions for them are tagged `expected-fail-until-P<n>` in `eval/corpus/multi_turn.yaml`. The design docs remain source-of-truth and lead the code.
 
-## The two source-of-truth docs
+## Source-of-truth docs (read for *what "correct" means*)
 
-- **`PRD_product.md`** — the product itself: problem, user, soul, character canon (§6 Wren backstory + §7 voice spec), feature specs with ✅/❌ acceptance examples, relationship arc, business model. Read for *what the product is and what "correct" looks like*. Technical/payment/ops detail is in its appendices A–F.
-- **`ARCHITECTURE.md`** — how the three pillars (proactivity / own-mind / relationship-stages) become a buildable system: 15 ADR-style decisions, data layout, per-turn flow, daily heartbeat, eval design, phased build checklist. Read for *how to build it*. Supersedes PRD Appendix A.
+- **`PRD_product.md`** — the product/soul/canon (§3 red lines, §6 Wren backstory, §7 voice spec), feature specs with ✅/❌ acceptance examples, relationship arc, business model.
+- **`ARCHITECTURE.md`** — how the three pillars become buildable: 15 ADR-style decisions, data layout, per-turn flow, daily heartbeat, eval design, phased build checklist (§12). Supersedes PRD Appendix A.
+- **`EVAL_spec.md` + `eval/eval_set.md`** — the eval bar + judging method, and the corpora: single-turn Cat 1–6, multi-turn §2 archetypes.
+- **`tasks/`** — `todo.md` (issues + dependency graph), `acceptance.md` (per-phase acceptance + end-to-end sample dialogues), `phase2.md` (Phase 2 build card).
+- **`docs/`** — `p0_verdict.md` (model decision), `DEV_WORKFLOW.md` (worktree workflow).
 
-Conflict resolution order: **§3 red lines** win → then `ARCHITECTURE.md` decisions → then the PRD body (whose §15 items are still open proposals).
+Conflict resolution order: **PRD §3 red lines** win → then `ARCHITECTURE.md` decisions → then the PRD body (whose §15 items are still open proposals).
 
 ## Non-negotiable product soul (PRD §3 — never violate)
 
@@ -27,25 +30,52 @@ Any code, prompt, feature, or copy must not break these:
 
 Hard tone limits: content ceiling is **suggestive, never explicit** (at any level). Mood baseline is **tired + wired + self-doubting**, not "happy art girl."
 
-## Architectural principles (ARCHITECTURE.md §0 — gate new decisions through these)
+## Architectural principles (ARCHITECTURE §0 — gate new decisions through these)
 
 1. **Emergence > modules.** Anything derivable from persona+world (landmine reactions, stance, attitude, impressions, repair judgments) must *emerge* inside the LLM call — do **not** build separate classifiers/scorers. Concretely: no landmine-detector, no sentiment scorer, **no points-based relationship system**.
 2. **Lightweight first, leave seams.** Build the thinnest thing that runs; pre-cut upgrade seams in the volatile spots (model routing, memory retrieval, eval) so iteration is drop-in.
 
-Consequences worth internalizing before touching the design:
-- **Think → speak = two cheap LLM calls.** Step1 = her emergent private inner monologue, whose *only* structured outputs are reply-or-not(+delay) and an impression note; Step2 = render that monologue into Wren's voice. Judgment is locked before wording (this is the anti-sycophancy mechanism). Silence ("leave on read") is a first-class Step1 outcome.
-- **Relationship level is a gate-key, not a voice dial.** Discrete Lv0–6 only gates *what unlocks*; tone comes from a qualitative prose state, never "you are Lv3, be friendly." Level is re-judged holistically each night by an LLM, never accumulated as points.
-- **Memory feeds Step1 only.** Per-user markdown, **not RAG**. The full (capped, tagged) event memory enters Step1, which surfaces 0–1 relevant items to Step2 — this is the anti-context-pollution mechanism.
-- **One Wren, one life (global) + per-user relationships.** Daily life-events are global ground truth; whether/how she reaches out is per-user. User conversations write only their own thread, never the global world.
+## Corrections Leon has already made (treat as prevention rules, don't relearn these)
 
-## Conventions
+- **Never hardcode response patterns into prompts.** He rejected "when commanded, use a rhetorical question" / "on X, say Y"-style rules **twice**. Wren's reactions must *emerge* from Step1 actually reasoning in the moment (a near-stranger's demand reads as absurd *because she thought about it* — so the wording varies naturally). The lever is `prompts/step1.py` (make her truly inhabit the moment) + persona/voice canon — **not** "what sentence form to use" in any prompt. This is §0① applied to voice, and it's soul-level for him.
+- **Step2 must spread the rich inner monologue into a few short bubbles** — never collapse it into one dismissive token (e.g. a bare `lol no`).
+- **Silence must be RARE.** `reply=False` is a first-class Step1 branch, but in live single-user use repeated "left on read" feels broken — she almost always replies, just coldly. Calibrate so silence stays uncommon.
+- **Tune voice on the real bot + traces, not in the abstract.** Loop = real `wren-bot` (@Her3636bot) + per-turn trace logs: chat for real → see what's off → adjust → chat again. Eval golds are *examples only*; the judge scores "does this read like a real human reaction", not "did it use a prescribed phrase".
+- **When asked to "prepare to develop phase X", co-design its acceptance criteria + test set with him** — don't just mechanically spin up a worktree. Lay out the decision points (coverage / pass-definition / threshold / judge / N), offer recommended options via AskUserQuestion, let him decide, then write the conclusion into the worktree docs. Pull him in especially on anything the docs mark "待 Leon 抠/确认".
+- **§0 itself (Emergence > modules, Lightweight + seams) came from repeated corrections.** When proposing architecture, default to asking "can this emerge instead of being a module?" and "can the MVP be thinner, with complexity left as a seam?"
 
-- **All of Wren's dialogue is English — it is product ground truth, not a translation** (PRD §7 voice rule). Design docs and code comments are Chinese.
-- **PRD §15 is unresolved.** Name (Wren), city (Brooklyn), the "contrast hobby" (astronomy), pricing, **LLM choice**, and launch market are *proposals*, not locked. Don't treat them as final.
-- **Biggest open risk = voice quality** (§15 #4 / Appendix B): whether a cheap model (DeepSeek-V3) can carry Wren's dry English texting voice. Unverified — de-risk it before building on top of it.
+## How the design maps to code (the big picture — read these together)
 
-## Where to start (no build/lint/test exists yet)
+- **Per-turn = think→speak, two cheap LLM calls**, orchestrated in `core/pipeline.py:handle_turn`: assemble context (`core/context.py` ← `core/storage.py`) → **Step1** (`core/step1.py`: emergent private monologue; the *only* structured outputs are reply-or-not + delay + an impression + 0–1 memory to surface) → **silence or Step2** (`core/step2.py`: render the locked monologue into Wren's voice bubbles) → write a trace (`core/trace.py`). **Judgment is locked in Step1 before any wording — this is the anti-sycophancy mechanism. Silence ("leave on read", `reply=False`) is a first-class Step1 branch.** Prompts are in `prompts/` (`system.py` persona + anti-sycophancy two axes; `step1/step2/judge`); `prompts/jsonio.py` is a lenient JSON parser so model output needn't be perfect.
+- **Relationship level is a gate-key, not a voice dial.** Discrete Lv0–6 (in `core/step2.py:level_fact`) only states *what unlocks*; tone comes only from qualitative prose. Level will be re-judged holistically each night by an LLM (Phase 6), never accumulated as points.
+- **Model seam (`model/`) is why everything runs offline.** Provider-agnostic `ChatModel` protocol (`base.py`); `registry.get_model(role)` returns `FakeChatModel` when there's no key or `WREN_FAKE_MODEL=1`, else `OpenAICompatModel`. Swapping LLM provider is a `.env` change (`WREN_BASE_URL/WREN_MODEL`), zero code.
+- **Storage (`core/storage.py`) = per-user markdown** under `data/users/{chat_id}/` (relationship_state / inner_voice / conversation / impressions_today / events / `trace.jsonl`). Relationship is **discrete level + prose + freeze, never points**. User conversations write *only* their own dir — never `world/` or `canon/`. `/delete` wipes the dir (incl. trace).
+- **Clock seam (`core/clock.py`):** `SystemClock` (prod, real UTC) vs `MockClock` (eval: set/advance, cross-midnight), injected via `handle_turn(clock=)`; the trace `ts` reads it. Phases 4/5/6 daily loops must inject it.
+- **Eval (`eval/`) is judge-only and NEVER imported by `core/`.** `mech_gate.py` (pure regex §7.5/7.6 + banned-phrase list) + `judge.py` (LLM-as-judge; Cat3 must distinguish servile / contrarian / robotic) + `scorer.py` (shared ruler) + `harness.py` (`wren-harness`: single-turn corpus × candidate models × N reps) + `bakeoff.py` + `replay.py`. **`multiturn.py` is the Phase 2 regression net** (`wren-multiturn`): MockClock fast-forwards days, an archetype simulator drives forced probes through `handle_turn`, an arc judge (`judge_arc`) checks each assertion over the transcript, and a pass-rate report is produced. Assertions with `blocked_until` are expected-fail until that phase ships (don't count toward the bar).
+- **`bot/`** = Telegram I/O (`handlers.py` + debounce + multi-bubble `sender.py`); **`onboarding/`** = static `/start` copy (no LLM — she doesn't break the ice or self-introduce).
 
-Planned stack (PRD Appendix D): Python 3.11+, `python-telegram-bot`, `openai`-compatible SDK, `apscheduler` (proactive cron + delayed sends), per-user markdown storage, Telegram Stars for payments, Railway/Fly.io (US/EU region).
+## Commands
 
-Build order is **risk-first** (ARCHITECTURE.md §12). **Phase 0 precedes any product code:** build a single-turn eval (mechanical voice checks from §7.5/§7.6 + a golden-dialogue LLM-judge from §7.4) and run a **voice bake-off** to pick the main model — this kills the project's #1 uncertainty before anything is built on it.
+```bash
+uv sync                                  # install (Python 3.11+, uv)
+cp .env.example .env                      # blank WREN_API_KEY → fake mode (offline)
+
+# Offline gate — no keys needed, all logic/contracts verifiable in fake mode:
+WREN_FAKE_MODEL=1 uv run pytest -q
+uv run ruff check . && uv run mypy src
+WREN_FAKE_MODEL=1 uv run pytest tests/test_multiturn.py -q     # one test file
+WREN_FAKE_MODEL=1 uv run pytest -k landmine -q                  # one test by name
+
+# Real runs (need WREN_API_KEY; results only meaningful with a real key):
+uv run wren-harness [--quick --reps N --no-bakeoff --category 3]   # Phase 0 single-turn eval / bake-off
+uv run wren-multiturn [--quick --script m-landmine]                # Phase 2 multi-turn, auto-judged
+uv run wren-multiturn --no-judge                                   # produce transcripts only (hand/Opus-judge)
+uv run wren-bot                                                    # needs TELEGRAM_BOT_TOKEN too
+```
+
+## Models, eval bar, dev workflow
+
+- **Wren runs on cheap `deepseek-v4-flash`** — the project's **#1 risk (§15 #4)** is whether a cheap model can carry her dry English voice. The **judge** is a stronger model: `deepseek-v4-pro` by default (key-free, but a *lenient* grader — see `db5d14f`), or **Claude Opus 4.7** via `WREN_JUDGE_MODEL=claude-opus-4-7` + `WREN_JUDGE_BASE_URL`/`WREN_JUDGE_API_KEY` (Anthropic's OpenAI-compatible endpoint). Docs say DeepSeek-V3 → upgraded to V4 (V3 retired). LLM choice is still §15-open.
+- **Bar** (`config.py`): general ≥80%, anti-sycophancy (Cat3 / `m-sycophant`) ≥90%, magic A/B vs sweet-girl baseline ≥70%. Always run **N reps and read the pass rate**, never a single run.
+- **Conventions:** Wren's dialogue is **English (product ground truth, not a translation)**; design docs and code comments are **Chinese**. §15 items (name/city/contrast-hobby/pricing/LLM/market) are proposals, not final.
+- **Worktree workflow** (`docs/DEV_WORKFLOW.md`): `main` stays clean; each issue = a worktree + same-named branch `p<phase>-<slug>` under `../HERR-worktrees/<id>/`; finish an issue by running `/go` in its worktree (verify → simplify → PR).
