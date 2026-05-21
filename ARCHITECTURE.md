@@ -224,14 +224,16 @@ cron 扫(每 ~10–15min)+ 规则预筛(零 LLM):频率预算 / 付费+等级门
 
 ## 12. 建造顺序(决策 15 · checkable)
 
-- [ ] **Phase 0 — 风险闸门**:单轮 eval(机械门 + 金标准 judge)+ **voice bake-off** → **定主模型**(掐 §15#4)
-- [ ] **Phase 1 — 垂直切片**:Telegram bot + Step1→Step2 + 单用户 markdown + Lv0 onboarding → **跑通一轮真对话**(可复用中文版架构骨架 storage/handler,content 全英文重做)。**🆕 trace(每轮可观测)+ 单轮 eval 接入也在本阶段**(Leon 2026-05-20 决策:walking skeleton 不裸跑,全程可跟踪 / 可评估;eval 集见 `eval/eval_set.md`,新增 issue `p1-trace`/`p1-eval-wire`)
-- [ ] **Phase 2 — eval 接上(多轮)**:多轮 hybrid 模拟 + mock 时钟 → 成为之后每层的回归网(**单轮 eval + trace 已在 Phase 1**)
-- [ ] **Phase 3 — 记忆**:三层 + 标签 → 命中 Day2「她记住你」卧槽
-- [ ] **Phase 4 — world / 因果链**:life-sim + world/today + inner_voice 演化 → 「她有自己的生活」
-- [ ] **Phase 5 — 主动消息**:beat 投射 + cron + 轻判 + 延迟发送 → 「半夜找你」卧槽
-- [ ] **Phase 6 — 关系夜结算**:印象 → 裁决 level + 散文 + 长期印象
-- [ ] **Phase 7 — Lv4 深夜脆弱** → 第一次「哭」场景
+> **进度(2026-05-21)**:P0–P3 ✅ 已并入 `main`;P4–P6 🟢 已实现于 `p4-6-integrated` 分支(未合 `main`,Leon 暂不合,合前重跑离线 gate);P7 ❌ 未建。
+
+- [x] **Phase 0 — 风险闸门**:单轮 eval(机械门 + 金标准 judge)+ **voice bake-off** → **定主模型**(掐 §15#4) · ✅ 并入 main
+- [x] **Phase 1 — 垂直切片**:Telegram bot + Step1→Step2 + 单用户 markdown + Lv0 onboarding → **跑通一轮真对话**(可复用中文版架构骨架 storage/handler,content 全英文重做)。**🆕 trace(每轮可观测)+ 单轮 eval 接入也在本阶段**(Leon 2026-05-20 决策:walking skeleton 不裸跑,全程可跟踪 / 可评估;eval 集见 `eval/eval_set.md`,新增 issue `p1-trace`/`p1-eval-wire`) · ✅ 并入 main
+- [x] **Phase 2 — eval 接上(多轮)**:多轮 hybrid 模拟 + mock 时钟 → 成为之后每层的回归网(**单轮 eval + trace 已在 Phase 1**) · ✅ 并入 main
+- [x] **Phase 3 — 记忆**:三层 + 标签 → 命中 Day2「她记住你」卧槽 · ✅ 并入 main(PR #5;间接召回 model-gated)
+- [ ] 🟢 **Phase 4 — world / 因果链**:life-sim + world/today + inner_voice 演化 → 「她有自己的生活」 · 已实现于 `p4-6-integrated` 分支(未合 main)
+- [ ] 🟢 **Phase 5 — 主动消息**:beat 投射 + cron + 轻判 + 延迟发送 → 「半夜找你」卧槽 · 已实现于 `p4-6-integrated` 分支(未合 main)
+- [ ] 🟢 **Phase 6 — 关系夜结算**:印象 → 裁决 level + 散文 + 长期印象 · 已实现于 `p4-6-integrated` 分支(未合 main)
+- [ ] **Phase 7 — Lv4 深夜脆弱** → 第一次「哭」场景 · ❌ 未建
 - [ ] **(后续)** Lv5 暧昧 / Lv6 表白 / onboarding-polish / 商业化 / 合规收尾
 
 > **onboarding(§9.1)**:第一条背景消息 + 18+ 门 = **静态 UX copy**(不走 LLM)→ init 单用户文件(Lv0 + 种 t=0 inner_voice)+ 她沉默;用户开口后走**正常 Step1→Step2**。§9.1 应答矩阵**不是 lookup 表,是从 Lv0 涌现 + 当 eval 目标**。

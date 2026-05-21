@@ -1,6 +1,6 @@
-# Wren — Phase 0 eval + Telegram walking skeleton
+# Wren — AI 关系模拟 Telegram bot(P0–P3 已并入 main,P4–6 在分支)
 
-英文 AI 关系模拟 Telegram bot "Wren" 的第一段可运行实现:**Phase 0 单轮 eval + voice bake-off**(掐头号风险 §15#4)+ **Phase 1 walking skeleton**(Telegram ↔ think→speak ↔ per-user markdown ↔ trace)。
+英文 AI 关系模拟 Telegram bot "Wren" 的可运行实现。**`main` 已并入 P0–P3**:Phase 0 单轮 eval + voice bake-off(掐头号风险 §15#4)、Phase 1 walking skeleton(Telegram ↔ think→speak ↔ per-user markdown ↔ trace)、Phase 2 多轮 eval 回归网、Phase 3 中期记忆(`events.md` 标签 → Step1)。**Phase 4–6(world 生活 / 主动消息 / 夜结算)已实现于未合并的 `p4-6-integrated` 分支**(Leon 暂不合,合前重跑离线 gate);Phase 7(Lv4 脆弱)未建。详见 `CLAUDE.md` Build state。
 
 设计权威在仓库根:`PRD_product.md` / `ARCHITECTURE.md` / `EVAL_spec.md` / `eval/eval_set.md` / `tasks/`。
 
@@ -14,7 +14,7 @@ cp .env.example .env   # 填 key/token;留空 WREN_API_KEY → 自动 fake 模�
 ## 离线验证(无需 key/token)
 
 ```bash
-WREN_FAKE_MODEL=1 uv run pytest -q     # 67 用例:机械门/语料/judge/管线/trace/bot handler…
+WREN_FAKE_MODEL=1 uv run pytest -q     # 全量离线用例:机械门/语料/judge/管线/trace/记忆/多轮/bot handler…
 uv run ruff check . && uv run mypy src
 ```
 所有逻辑、契约、管线、写边界铁律在 fake 下端到端可验证。
@@ -27,6 +27,14 @@ uv run wren-harness --quick --reps 2 --no-bakeoff   # 省钱冒烟
 uv run wren-harness --category 3    # 只跑反谄媚(pillar#2)
 ```
 产出:每个候选模型的「Cat × 通过率」+ 反谄媚 Cat3 通过率(门槛 90%)+ 对甜妹 baseline 胜率(门槛 70%)+ 失败样本明细。结论见 `docs/p0_verdict.md`。
+
+## 跑多轮 / 活度 eval(需 WREN_API_KEY)
+
+```bash
+uv run wren-multiturn [--quick --script m-landmine]   # P2 多轮回归网:mock 钟快进 + archetype 模拟 + arc judge
+uv run wren-multiturn --no-judge                       # 只产 transcript(供 Opus/手判)
+uv run wren-aliveness [--quick --tell T1]              # 活度集:3 个 AI 味失败模式,Opus 判 alive/flat
+```
 
 ## 起 Telegram bot(需 TELEGRAM_BOT_TOKEN + WREN_API_KEY)
 
@@ -55,7 +63,7 @@ eval/corpus/      单轮语料 fixture(Cat1-6)
 src/wren/
   model/          ★ model-router seam(fake + openai 兼容真实适配器 + registry)
   prompts/        Wren system 种子(反谄媚两轴)+ step1/step2/judge prompt
-  eval/           机械门 + judge + 打分内核(scorer)+ harness + bakeoff + replay
+  eval/           机械门 + judge + 打分内核(scorer)+ harness + bakeoff + multiturn + replay
   core/           生产链路:storage / clock / context / step1 / step2 / pipeline / trace
   onboarding/     §9.1 静态文案(不走 LLM)
   bot/            Telegram I/O:handlers / debounce / sender / app
