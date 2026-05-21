@@ -13,6 +13,7 @@ dependencies = [
 [project.scripts]
 wren-harness = "wren.eval.harness:main"
 wren-multiturn = "wren.eval.multiturn:main"
+wren-aliveness = "wren.eval.aliveness:main"
 wren-bot = "wren.bot.app:main"
 
 [dependency-groups]

@@ -27,6 +27,7 @@ BASELINE_WIN_THRESHOLD = 0.70  # 魔法 A/B:对甜妹 baseline 胜率门槛(spec
 CANON_DIR = PROJECT_ROOT / "canon"
 CORPUS_PATH = PROJECT_ROOT / "eval" / "corpus" / "single_turn.yaml"
 MULTITURN_CORPUS_PATH = PROJECT_ROOT / "eval" / "corpus" / "multi_turn.yaml"
+ALIVENESS_CORPUS_PATH = PROJECT_ROOT / "eval" / "corpus" / "aliveness.yaml"
 
 
 @dataclass(frozen=True)
