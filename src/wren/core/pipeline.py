@@ -50,11 +50,13 @@ def handle_turn(
     ctx = assemble_context(store, user_text)
     s1 = run_step1(ctx, s1_model)
 
-    # Step1 写回:inner_voice(最新独白)+ 一条印象
+    # Step1 写回:inner_voice + 印象 + 可能记住的事(沉默轮也记 → 必须在 reply 分支前)
     if s1.monologue:
         store.write_inner_voice(s1.monologue)
     if s1.impression:
         store.append_impression(s1.impression)
+    if s1.event_to_store:
+        store.append_event(**s1.event_to_store)
 
     ts = iso_z(clock.now())
     turn_id = f"{chat_id}-{count_traces(store.dir) + 1}"
@@ -63,6 +65,7 @@ def handle_turn(
         "prompt": {  # 她"读到了什么"(动态 context;静态 canon 不重复落)
             "relationship_prose": ctx.relationship.prose,
             "inner_voice": ctx.inner_voice,
+            "events": ctx.events,
             "recent_dialogue": ctx.recent_dialogue,
         },
         "raw_out": s1.raw,
@@ -71,6 +74,7 @@ def handle_turn(
         "delay_s": s1.delay_s,
         "impression": s1.impression,
         "selected_memory": s1.selected_memory,
+        "event_stored": s1.event_to_store,
         "tokens": s1.tokens,
         "latency_ms": s1.latency_ms,
         "model": s1.model,

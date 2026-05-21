@@ -4,7 +4,8 @@
 - relationship_state.md = 离散 level(gate-key)+ 定性散文 + freeze,**绝不存积分**。
 - 用户线只写 data/users/{chat_id}/,**永不碰 world/ 或 canon/**(类里根本没有那种方法)。
 - /delete 清整个目录(含 trace)。
-- events.md 预留 topic/valence/salience 标签字段(Phase 3 用),MVP 仅 stub。
+- events.md = 中期记忆(每条带 topic/valence/salience 标签);Step1 涌现写入,注入回 Step1 供召回。
+- **反污染**:events 只进 Step1,Step2 永不接收完整 dossier(§4/§8)。
 """
 
 from __future__ import annotations
@@ -16,6 +17,9 @@ from pathlib import Path
 from .. import config
 
 _CHAT_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+# events.md 行:- [topic|valence|salience] text
+_EVENT_RE = re.compile(r"^- \[([^|\]]*)\|([^|\]]*)\|([^|\]]*)\]\s*(.*)$")
+_SALIENCE_RANK = {"high": 2, "med": 1, "low": 0}
 
 # t=0 初始内心(PRD §9.1)
 _INITIAL_INNER_VOICE = """\
@@ -43,6 +47,19 @@ class Relationship:
     prose: str  # 定性散文,驱动语气
     freeze: bool = False  # 中观失败 deep-freeze(可修复)
     # ↑ 故意没有 points/score 字段(§0① 非积分制)
+
+
+@dataclass(frozen=True)
+class Event:
+    """中期记忆一条:关于对方生活的具体事 + 标签(涌现自 Step1,非全量记录)。"""
+
+    topic: str
+    valence: str  # pos | neg | neutral
+    salience: str  # low | med | high
+    text: str
+
+    def render(self) -> str:
+        return f"- [{self.topic}|{self.valence}|{self.salience}] {self.text}"
 
 
 class UserStore:
@@ -135,6 +152,48 @@ class UserStore:
     def append_impression(self, text: str) -> None:
         with self._impressions.open("a", encoding="utf-8") as f:
             f.write(f"- {text.strip()}\n")
+
+    # ---- events(中期记忆;Step1 涌现写入 + 注入 Step1 召回;只进 Step1,反污染)----
+    @staticmethod
+    def _clean_field(s: str) -> str:
+        return str(s).replace("|", "/").replace("]", ")").replace("\n", " ").strip()
+
+    def append_event(self, text: str, topic: str, valence: str, salience: str) -> None:
+        ev = Event(
+            topic=self._clean_field(topic),
+            valence=self._clean_field(valence),
+            salience=self._clean_field(salience),
+            text=self._clean_field(text),
+        )
+        if not ev.text:
+            return
+        with self._events.open("a", encoding="utf-8") as f:
+            f.write(ev.render() + "\n")
+
+    def read_event_list(self, cap: int | None = None) -> list[Event]:
+        """解析 events.md;超 cap 先逐出最旧的低 salience(高 salience/近期多留),返回时间序。"""
+        if not self._events.exists():
+            return []
+        evs: list[Event] = []
+        for ln in self._events.read_text(encoding="utf-8").splitlines():
+            m = _EVENT_RE.match(ln.strip())
+            if m:
+                evs.append(
+                    Event(m.group(1).strip(), m.group(2).strip(), m.group(3).strip(), m.group(4).strip())
+                )
+        cap = config.events_cap() if cap is None else cap
+        if 0 <= cap < len(evs):
+            ranked = sorted(
+                enumerate(evs),
+                key=lambda it: (_SALIENCE_RANK.get(it[1].salience, 0), it[0]),
+                reverse=True,
+            )[:cap]
+            evs = [e for _, e in sorted(ranked, key=lambda it: it[0])]
+        return evs
+
+    def read_events(self, cap: int | None = None) -> str:
+        """注入 Step1 的中期记忆块(capped, 时间序);无则空串。"""
+        return "\n".join(e.render() for e in self.read_event_list(cap))
 
     # ---- conversation(最近对话,喂 Step1 context)----
     def append_dialogue(self, role: str, text: str) -> None:

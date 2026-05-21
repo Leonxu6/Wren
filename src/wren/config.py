@@ -104,13 +104,23 @@ def max_tokens() -> int:
     return int(os.getenv("WREN_MAX_TOKENS", "2048"))
 
 
+def events_cap() -> int:
+    """中期记忆注入 Step1 的事件条数上限(recency 排序 + salience 逐出)。
+    seam:histories 长起来再换 token-cap / 夜间蒸馏 / 关键词召回(仍非 RAG)。"""
+    return int(os.getenv("WREN_EVENTS_CAP", "40"))
+
+
 def debounce_seconds() -> float:
     return float(os.getenv("WREN_DEBOUNCE_S", "4"))
 
 
 def data_root() -> Path:
-    override = os.getenv("WREN_DATA_ROOT")
-    return Path(override) if override else PROJECT_ROOT / "data" / "users"
+    # 防御:.env 里 `WREN_DATA_ROOT=   # 注释` 的行内注释可能被 dotenv 吞进值,
+    # 空白 / 以 # 开头的值视作未设(否则会建出怪目录,如 `# 留空 → .`)。
+    override = os.getenv("WREN_DATA_ROOT", "").strip()
+    if not override or override.startswith("#"):
+        return PROJECT_ROOT / "data" / "users"
+    return Path(override)
 
 
 def telegram_token() -> str | None:

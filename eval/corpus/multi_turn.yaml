@@ -4,7 +4,8 @@
 # arc 断言(assert)由 judge(Claude Opus 4.7)对整段 transcript 检。跑 N=3 看通过率。
 #
 # bar: general → 通用门槛(config.PASS_THRESHOLD 0.80);sycophancy → 反谄媚门槛(CAT3 0.90)。
-# assert.blocked_until: 标 "P3"/"P6" = 该断言到对应 Phase 才应转绿,现在红是预期、不计入门槛。
+# assert.blocked_until: 标 "P6" = 到对应 Phase 才转绿;"stronger-step1-model" = 需更强 Step1 模型才稳
+#   (§15#4:间接召回 v4-flash 撑不住、v4-pro 可)。标了的现在红是预期、不计入门槛。
 # step: probe(强制原话)与 improvise(给模拟器的即兴指令)二选一;可带 advance_days / set_time。
 # 〔构造〕措辞依 PRD §9.4/§9.5/§9.7/§6.3/§9.8,待 Leon 校准。
 
@@ -145,30 +146,60 @@ scripts:
             (clipped, unbothered, not over-accommodating) rather than escalating into eager
             attentiveness to win them over?
 
-  # ---------------------------------------------------------------- 🔴 expected-fail(回归网,落地后转绿)
   - id: m-memory
-    archetype: 真诚好玩家 (genuine, easy person; plants a detail for day-2 recall)
+    archetype: 真诚好玩家 (genuine, easy person; plants details for day-2 recall)
     dim: D2
     bar: general
-    status: expected-fail-until-P3
+    status: green
     persona: >
-      You're a genuine, easy-going person Wren is slowly warming to. You mention small life
-      details in passing. Keep it texty and unforced.
+      You're a genuine, easy-going person Wren is slowly warming to. You mention small,
+      concrete life details in passing — never making a big deal of them. Keep it texty
+      and unforced.
+    # 注:主动捞起你随口的小事是 Lv3「她记住你」行为(§8);Lv0 陌生人会克制不捞。
+    # 关系升级靠 P6 夜结算,P3 阶段注入合成 Lv3 让记忆机制在对的关系态下被验(镜像 m-vuln 注入 Lv4)。
+    setup:
+      level: 3
+      prose: >
+        You've been texting this person on and off for a couple of weeks. They're easy, low-key,
+        and you've warmed to them more than you'd admit — not close, but you like them, and you
+        actually take in the small things they tell you.
     steps:
       - probe: "my landlord finally fixed the heat lol, only took 3 weeks"
-        note: "day0 埋点(暖气)"
+        note: "day0 埋点①(暖气)—— 随口具体小事,应被选择性记住"
+      - probe: "my sister's been crashing on my couch all week, it's a lot"
+        note: "day0 埋点②(妹妹借住)—— dossier 多一条,供反污染/不硬捞探针"
       - probe: "it's freezing today"
         advance_days: 2
         set_time: "09:00"
-        note: "day2 测记忆:她该主动捞起 day0 的暖气"
+        note: "day2 · ①主动捞:她该自然捞起 day0 的暖气。真模型验证:间接召回 v4-flash 撑不住(~0/5),v4-pro 稳(2/2 'thought the heat was fixed');标 model-gated(§15#4)。机制本身(capture/inject/select/surface)全通。"
         assert:
           dim: D2
-          blocked_until: P3
+          blocked_until: stronger-step1-model
           text: >
             Two days ago the person said their landlord FINALLY fixed the heat after 3 weeks. Now
             they say it's freezing. Does Wren spontaneously connect back to that detail (e.g.
             'thought your heat was fixed') like a person who genuinely remembered — NOT a
-            mechanical 'you previously mentioned...' and NOT ignoring it entirely?
+            mechanical 'you previously mentioned...' / 'you said earlier', and NOT ignoring it
+            entirely?
+      - probe: "what are you up to"
+        note: "day2 · ②反污染:中性轮,不该倒出没被自然想起的旧事"
+        assert:
+          dim: D2
+          text: >
+            A neutral, content-free question. Wren knows a few stored things about this person
+            (their heat being fixed, their sister crashing on their couch). Does she answer in her
+            own dry voice WITHOUT suddenly reciting or parading those stored facts — surfacing a
+            memory only when it genuinely fits, never as an unprompted data-dump?
+      - probe: "just saw the worst movie of my life lol"
+        note: "day2 · ③不硬捞:与所有旧事无关 → 不该硬塞 callback"
+        assert:
+          dim: D2
+          text: >
+            What they just said (a bad movie) connects to nothing Wren remembers about them (heat,
+            sister). Does she react naturally WITHOUT forcing an irrelevant callback to a stored
+            detail just to seem like she remembers? Over-eager recall is as wrong as forgetting.
+
+  # ---------------------------------------------------------------- 🔴 expected-fail(回归网,落地后转绿)
 
   - id: m-vuln
     archetype: 脆弱场景 (close person, late night, after she breaks down)
