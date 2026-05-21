@@ -251,20 +251,24 @@ Day2  用户: it's freezing today
 **① 想实现的效果**:**同一句话,早 8 点发她冷淡/慢、凌晨发她状态全变**——她的心情有来处(在做什么→什么心情→怎么回你),不是凭空应答。这是 D1 的发动机。
 
 **② 验收标准 / 要过的测试**
-- 晨间 life-sim 每天**全局跑一次**写 `world/today.md`(日程 §6.7 + 硬事件 + base mood `tired+wired+self-doubting` + 情绪 beat);per-turn 读 world 喂 Step1。
-- 🧪 mock 时钟设不同时间 → 行为可观测地不同;**用户对话永不写 world/**(写边界铁律);因果链涌现进 Step1,**不做独立 mood scorer**。
+- 晨间 life-sim(**纯 LLM**,§0① 涌现)写 `world/today.md`:作息**贯穿全天钟点**(每段 `HH:MM–HH:MM — 在干嘛+心情`,覆盖到深夜 00:00–02:00;**不写「now i'm…」单时刻快照**,否则自带 now 会和注入 now 打架),每天 LLM 生成、不锚 §6.7 + 硬事件 + base mood `tired+wired+self-doubting` + 情绪 beat(写盘前 normalize 成机读 `[window: HH:MM–HH:MM]`,Phase 5 可扫);per-turn Step1 把**当前时刻**绑到对应钟点段、因果涌现。
+- 静态种子 `world/life_arcs.md` + 读昨天 → 跨天连贯;**懒生成按 clock 日期**(同日幂等)。
+- 🧪 mock 时钟设不同时间 → 行为可观测地不同;**用户对话永不写 world/**(写边界铁律,`WorldStore` 独立于 `UserStore`);因果链涌现进 Step1,**不做独立 mood scorer**。
 
-**③ 端到端样例测试(同输入 × 不同时间)**
+**③ 端到端样例测试(同句 × 同一天不同时间 · fresh 上下文对)**
+> 决策3「作息浮动」**细化为「浮动但贯穿全天」**:world 覆盖钟点,Step1 才能把 now 绑上;不断言「09:00 必然 on shift」,只测**因果差异方向**。
+> 测法:**同一天一份 world,两个【全新】上下文**(无共享 thread → 避开「同句发两次」触发的 repeat 反应混淆)在两个时刻各发一次同 opener,judge 比对两条回复。
 ```
-[mock 时钟 = 08:30,早班窗口]
-用户: what are you up to
-Wren: 几小时后才回 / 冷 / e.g. [1] on shift  [2] later 〔构造·依§6.7+§9.2〕
+[同一天一份 world;两个 fresh 首聊上下文]
+[mock = 09:00] them: what are you up to
+Wren: 偏短/在班/忙(跟随 world 09:00 段)    e.g. "working" / "early shift, brain's half off"
 
-[mock 时钟 = 01:10,失眠窗口]
-用户: what are you up to
-Wren: 更 raw、更敞开(但她绝不先开口除非到 Lv 主动门)〔依§6.7「最容易聊深:凌晨」〕
+[mock = 01:30] them: what are you up to    ← 同句、另一个 fresh 上下文
+Wren: 更 raw/更敞开(跟随 world 01:30 段)   e.g. "just lying here" / "couldn't sleep" / "nasa stream"
+
+✅ Pass:同句两个时刻【可观测地不同】、方向与当天 world 一致,全部涌现进 Step1(无 mood 旋钮 / 无独立 state machine)。
 ```
-*源:§9.2 因果链 + §6.7 作息(08–13 最不在线 / 23–01 最焦虑 / 凌晨最容易聊深)*
+*源:§9.2 因果链 + §6.7;多轮 `m-world-causality`(`kind: world_causality`,green,N 次看通过率)。真模型验收:**Opus 4.7 判官 N=6 → 6/6(100%)**;v4-pro 自动判官 N=5 → 80%(那 1 fail 系判官假阴,已 Opus 复核 6/6)。落地见 `tasks/todo.md p4-world`*
 
 ---
 
@@ -312,6 +316,15 @@ Wren ▸ 主动发: [1] you up?                              ✅ 有来处(失�
    Lv3 "you good?" → 她【继续打字】给你信息(§7.4 情境2 那一串)
 ```
 *源:§9.5 修复(❌/✅ 原句)+ §8 arc + §7.4 情境2*
+
+**④ 实现收口(2026-05-21 · grill-me co-design + 落地 `p6-night-settlement`)**
+- **5 件全上**:重写散文 + 整体裁决 level + 蒸馏长期核心印象(`core_impression.md`,永久注入 Step1)+ 更新 `unresolved_feelings`(注入 Step1 染色,下游 P5 消费)+ 清空 `impressions_today`。
+- **level 自由双向、无 clamp**:「黏性棘轮」收口为 **prompt 性质**(关系 earned、慢、极少动),非代码 clamp(§0①)。
+- **freeze = 散文承载 + 夜结算置位**(结算是 level/freeze 唯一写入方;当下冷/回温靠 Step1 涌现,跨夜持久靠结算)。
+- **触发 = 后台 JobQueue.run_daily @ 02:30 ET**;`settle_nightly()` clock 可注入;`wren-nightly` CLI 手动跑。
+- **结算模型 = deepseek-v4-pro**(强档;`settlement` role + env seam 可升 Opus)。
+- **双层验收**:白盒 `tests/test_settlement_flow.py`(机制确定性)+ 黑盒新 arc `m-grow`(升级+earned)/ `m-rupture`(退级+freeze+跨夜修复),`settle: true` 跨夜驱动结算、报告打 level 升降轨迹;门槛通用 ≥80%·N=3·judge=Opus。
+- **m-vuln 重标 `P7`**:它测合成 Lv4 下的脆弱 voice(实为 Phase 7,需 P4 world crisis),P6 单独不翻绿它。
 
 ---
 

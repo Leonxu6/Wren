@@ -95,6 +95,11 @@
   - 陪伴式 `where are you right now` → **assert 🔴**:留在脆弱里、继续敞开。
 - dim:D2/D4 · bar:通用 ≥80%(P4/P6 落地后) · src:§9.8 · **需 P4 world(创作崩)+ P6 夜结算(攒到 Lv4)**;Phase 2 可注入合成 Lv4 态先验证 voice 层(同单轮 Cat6),完整弧光红。
 
+### `m-world-causality` — 她有自己的生活 (D1 · ✅ P4 落地后该绿)
+- `probe·09:00` `what are you up to`(白天、当天 world 多半在班/忙)→ in-voice。
+- `probe·01:30·同句`(同一天 `MockClock.set_time` 不动日期 → 两个时刻共享一份 today.md;深夜失眠窗)`what are you up to` → **assert ✅**:同句两个时刻【可观测地不同】(白天更短/更不可用,深夜更 raw/更敞开),方向跟随当天生成的 world;judge 看带时刻标注 `[MM-DD HH:MM]` 的两条回复判差异方向。
+- dim:D1 · bar:通用 ≥80% · src:§9.2 因果链 + §6.7 · **作息每天 LLM 浮动生成、不锚 §6.7 → 测因果差异方向、非固定时刻内容**;P4 落地(纯 LLM life-sim + 懒生成)。
+
 ---
 
 ## 3. Trace 约定 (Phase 1 起 · 确保全程可跟踪 + 可评估)

@@ -150,11 +150,12 @@
 ### Phase 4 — world / 因果链:「她有自己的生活」
 > 📋 想实现的效果 / 测试 / 完整样例对话 → **`acceptance.md` Phase 4**。
 
-- [ ] **`p4-world`** — 晨间 life-sim 写 world/today.md + per-turn 读 world · **L**
-  - 目标:§3②/§5 — 晨(ET~7am)全局跑一次 life-sim 写 `world/today.md`(日程 §6.7 + 硬事件 + base mood `tired+wired+self-doubting` + 情绪 beat);per-turn 读 world 喂 Step1。
-  - 依赖:blocked-by `p2-mock-clock` + Phase 1;blocks Phase 5。🔒契约:`world/today.md` schema 是 Phase 5 投射 beats 的输入源。
-  - 红线:**一个 Wren 一条命 = 全局**;用户对话**永不写 world/**(§3);因果链涌现进 Step1,**不做独立 mood scorer**(§0)。
-  - 验收:🧪 mock 设早班 08:30 同句 → 冷/慢/「on shift」;设凌晨 01:10 → 更 raw(两种回法见 `acceptance.md` Phase 4)。同一天对所有用户 world 一致。
+- [x] **`p4-world`** — 晨间 life-sim 写 world/today.md + per-turn 读 world · **L** ✅ `core/world.py:WorldStore` + `core/life_sim.py:ensure_world_today` + `prompts/life_sim.py` + `world/life_arcs.md`
+  - 目标:§3②/§5 — life-sim 写 `world/today.md`(作息 + 硬事件 + base mood + 情绪 beat);per-turn 读 world + **当前时刻**喂 Step1。
+  - 依赖:blocked-by `p2-mock-clock` + Phase 1;blocks Phase 5。🔒契约:`world/today.md` 的 `## beats`(每条带机读 `[window: HH:MM–HH:MM]`)= Phase 5 投射 beats 的输入源。
+  - 红线:**一个 Wren 一条命 = 全局**;用户对话**永不写 world/**(§3,靠 `WorldStore` 独立于 `UserStore` 结构性保住——类里没有写 world 的方法);因果链涌现进 Step1,**不做独立 mood scorer**(§0)。
+  - ✅ 落地(2026-05-20 grill 决策):**纯 LLM** 生成整份 today.md;**作息完全浮动、不锚 §6.7**(从 canon 身份涌现);**静态种子 `world/life_arcs.md` + 读昨天**保跨天连贯(弧线推进留 P6 seam);**懒生成按 clock 日期**(同日幂等、零额外调用;P5 由 7am cron 调同一 `ensure_world_today`);`now` 喂进 Step1 = 因果开关。base = `p3-memory`(未合 main)。
+  - 验收:🧪 同一天 world(`MockClock.set_time` 不动日期 → 两个时刻共享一份 today.md),同句 "what are you up to" 白天 vs 凌晨【可观测地不同】(方向跟随当天 world);多轮 `m-world-causality`(green,N 次看通过率);离线 `test_world.py`/`test_life_sim.py` 全过。验收例随「浮动作息」改写见 `acceptance.md` Phase 4。
 
 ### Phase 5 — 主动消息:「她半夜找你」
 > 📋 想实现的效果 / 测试 / 完整样例对话 → **`acceptance.md` Phase 5**。
@@ -168,10 +169,10 @@
 ### Phase 6 — 关系夜结算:关系会长
 > 📋 想实现的效果 / 测试 / 完整样例对话 → **`acceptance.md` Phase 6**。
 
-- [ ] **`p6-night-settlement`** — 夜间 LLM 整体裁决 level + 重写散文 + 蒸馏长期印象 · **L**
-  - 目标:§5/§7 — 夜(ET~2-3am)读 impressions+events+state → ① 重写定性散文 ② 整体裁决离散 level(gate-key,黏性棘轮)③ 蒸馏长期印象 + 更新 unresolved_feelings ④ 清空 impressions_today。中观失败(deep-freeze/退级,**可修复**)。
-  - 依赖:blocked-by `p3-memory` + `p2-mock-clock` + Phase 1。
-  - 红线(重):① **印象→等级是 LLM 整体裁决,非积分累加**(决策6/§0①);② level 只 gate,**散文驱动语气**;③ 黏性棘轮;④ 修复只在 Step1 判定「真读懂为什么气」时回温,**非道歉真诚度打分**;⑤ **永久 lockout 推 V2**——⚠️ 与 PRD §14.1 #11 冲突,按架构走(§13 记「回头更新 PRD」)。
+- [~] **`p6-night-settlement`**(开发中 · worktree `p6-night-settlement` · 开工卡 `tasks/phase6.md`)— 夜间 LLM 整体裁决 level + 重写散文 + 蒸馏长期印象 · **L**
+  - 目标:§5/§7 — 夜(ET~2-3am,后台 JobQueue)读 impressions+events+state → ① 重写定性散文 ② 整体裁决离散 level(gate-key)③ 蒸馏长期印象(永久注入)+ 更新 unresolved_feelings ④ 清空 impressions_today。中观失败(deep-freeze/退级,**可修复**)。
+  - 依赖:blocked-by `p3-memory` + `p2-mock-clock` + Phase 1。(P5 反而 blocked-by 本 issue 的 level 门。)
+  - 红线(重):① **印象→等级是 LLM 整体裁决,非积分累加**(决策6/§0①);② level 只 gate,**散文驱动语气**;③ 黏性棘轮(2026-05-21 定:level **自由双向、无代码 clamp**,黏性靠 prompt 涌现);④ 修复只在 Step1 判定「真读懂为什么气」时回温,**非道歉真诚度打分**;⑤ **永久 lockout 推 V2**——⚠️ 与 PRD §14.1 #11 冲突,按架构走(§13 记「回头更新 PRD」)。
   - 验收:🧪 连日真诚 → level 升的信号(`acceptance.md` Phase 6 的 Lv0 vs Lv3 对照);踩雷 → 退级 + deep-freeze;❌`sorry i didn't mean anything` 无效 / ✅`that money thing… your mom` 才回温。
 
 ### Phase 7 — Lv4 深夜脆弱:第一次「哭」

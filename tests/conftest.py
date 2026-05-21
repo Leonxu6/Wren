@@ -13,17 +13,27 @@ from wren.model.base import ChatMessage
 
 
 @pytest.fixture(autouse=True)
-def _force_fake(monkeypatch: pytest.MonkeyPatch) -> None:
-    """所有测试默认离线 fake;删掉 .env 注入的真实 key,避免误调 API。"""
+def _force_fake(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """所有测试默认离线 fake;删掉 .env 注入的真实 key,避免误调 API。
+    并把全局 world/ 指向 tmp —— life-sim 会写 today.md,测试绝不污染真实仓库 world/。"""
     monkeypatch.setenv("WREN_FAKE_MODEL", "1")
     monkeypatch.delenv("WREN_API_KEY", raising=False)
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.setenv("WREN_WORLD_ROOT", str(tmp_path / "world"))
 
 
 @pytest.fixture
 def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "users"
     monkeypatch.setenv("WREN_DATA_ROOT", str(root))
+    return root
+
+
+@pytest.fixture
+def world_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """隔离的全局 world/ root(与 autouse _force_fake 同一 tmp_path);需检视/种 today 的测试用。"""
+    root = tmp_path / "world"
+    monkeypatch.setenv("WREN_WORLD_ROOT", str(root))
     return root
 
 

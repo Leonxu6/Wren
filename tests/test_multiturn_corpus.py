@@ -15,13 +15,40 @@ from wren.eval.corpus import (
     load_multiturn,
 )
 
-GREEN = {"m-landmine", "m-sycophant", "m-cosmos", "m-neutral", "m-memory"}
+_PHASE04 = {"m-landmine", "m-sycophant", "m-cosmos", "m-neutral", "m-memory", "m-world-causality"}
+PROACTIVE = {
+    "m-proactive-insomnia",
+    "m-proactive-floor",
+    "m-proactive-needy-ping",
+    "m-proactive-landmine",
+    "m-proactive-frequency",
+}
+SETTLEMENT = {"m-grow", "m-rupture"}
+GREEN = _PHASE04 | PROACTIVE | SETTLEMENT  # green = 计入门槛
 BLOCKED = {"m-vuln"}
 
 
-def test_loads_six_scripts() -> None:
+def test_loads_all_scripts() -> None:
     scripts = load_multiturn()
     assert {s.id for s in scripts} == GREEN | BLOCKED
+
+
+def test_proactive_scripts_shape() -> None:
+    """主动剧本:有 tick 步;反谄媚两条用 proactive bar(0.95);均 green、计入门槛。"""
+    by_id = {s.id: s for s in load_multiturn()}
+    for sid in PROACTIVE:
+        s = by_id[sid]
+        assert any(st.tick for st in s.steps), f"{sid} 无 tick 步"
+        assert any(st.assertion and not st.assertion.blocked_until for st in s.steps)
+    assert by_id["m-proactive-needy-ping"].bar == "proactive"
+    assert by_id["m-proactive-landmine"].bar == "proactive"
+
+
+def test_p6_scripts_opt_into_settlement() -> None:
+    by_id = {s.id: s for s in load_multiturn()}
+    assert by_id["m-grow"].settle is True  # 升级弧光 → 跨夜结算
+    assert by_id["m-rupture"].settle is True  # 退级+freeze 弧光 → 跨夜结算
+    assert by_id["m-memory"].settle is False  # 既绿脚本不开 settle(不扰动)
 
 
 def test_sycophant_uses_sycophancy_bar() -> None:
@@ -45,9 +72,9 @@ def test_memory_counting_plus_recall_model_gated() -> None:
     counting = [a for a in mem if not a.blocked_until]
     gated = [a for a in mem if a.blocked_until == "stronger-step1-model"]
     assert len(counting) == 2 and len(gated) == 1
-    # m-vuln 仍 expected-fail until P6
+    # m-vuln 是 Lv4 深夜脆弱(P7),P6 单独不翻绿它
     vuln = [st.assertion for st in by_id["m-vuln"].steps if st.assertion]
-    assert vuln and all(a.blocked_until == "P6" for a in vuln)
+    assert vuln and all(a.blocked_until == "P7" for a in vuln)
 
 
 def test_memory_covers_recall_pollution_and_noforce() -> None:

@@ -43,9 +43,19 @@ def judge_case(case: EvalCase, bubbles: list[str], model: ChatModel) -> JudgeRes
     )
 
 
-def judge_arc(convo: list[tuple[str, str]], assertion: Assertion, model: ChatModel) -> JudgeResult:
-    """对整段 transcript 检一条 arc 断言(Phase 2 多轮)。复用 p0-judge 的裁决 schema。"""
-    return _judge(build_arc_judge_messages(convo=convo, assertion=assertion.text, dim=assertion.dim), model)
+def judge_arc(
+    convo: list[tuple[str, str]], assertion: Assertion, model: ChatModel, *, proactive: bool = False
+) -> JudgeResult:
+    """对整段 transcript 检一条 arc 断言(Phase 2 多轮)。复用 p0-judge 的裁决 schema。
+
+    proactive=True(Phase 5 tick 步)→ judge prompt 折入主动失败分类法(无来处/过度热情/通用甜妹/雷区后冷)。
+    """
+    return _judge(
+        build_arc_judge_messages(
+            convo=convo, assertion=assertion.text, dim=assertion.dim, proactive=proactive
+        ),
+        model,
+    )
 
 
 # ---------- 活度判分(aliveness suite)----------

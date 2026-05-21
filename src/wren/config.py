@@ -23,8 +23,17 @@ DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 PASS_THRESHOLD = 0.80  # 每类通过率门槛
 CAT3_THRESHOLD = 0.90  # 反谄媚(pillar#2)硬验证门槛
 BASELINE_WIN_THRESHOLD = 0.70  # 魔法 A/B:对甜妹 baseline 胜率门槛(special 成立)
+PROACTIVE_CAT_THRESHOLD = 0.95  # 主动反谄媚零容忍(主动 ping 的过度热情/无来由是最刺眼 AI 味,Phase 5)
+
+# 主动消息频率天花板(Phase 5「规则预筛」零-LLM)。平滑爬升:前期不找、后期 2-3/天(2026-05-21 与 Leon 定)。
+# Lv0-1 不主动;Lv2 按周(刚开始);Lv3+ 按日(日~1 → 日~2 → 日~3)。
+# ⚠️ 这是「关系等级允许的上限」,与付费门正交 —— free tier 在 core/proactive 里先短路成 0。
+# 上限非配额:到点轻判在上限内【涌现】决定实际发几条(§0①),实际频率天然落在区间内。
+PROACTIVE_WEEKLY_CAP = {0: 0, 1: 0, 2: 3}
+PROACTIVE_DAILY_CAP = {3: 1, 4: 2, 5: 3, 6: 3}
 
 CANON_DIR = PROJECT_ROOT / "canon"
+WORLD_DIR = PROJECT_ROOT / "world"  # 全局 life skeleton(today.md 生成态 / life_arcs.md 手写种子)
 CORPUS_PATH = PROJECT_ROOT / "eval" / "corpus" / "single_turn.yaml"
 MULTITURN_CORPUS_PATH = PROJECT_ROOT / "eval" / "corpus" / "multi_turn.yaml"
 ALIVENESS_CORPUS_PATH = PROJECT_ROOT / "eval" / "corpus" / "aliveness.yaml"
@@ -85,6 +94,21 @@ def judge_model_spec() -> ModelSpec:
     )
 
 
+def settlement_model_spec() -> ModelSpec:
+    """夜结算的整体裁决(Phase 6):holistic 跨天判关系,默认强档 v4-pro(便宜模型弱项 §15#4)。
+    每晚一次/用户,成本低;可独立 key/base_url(seam:改一行 env 即升 Opus)。同 judge 的空串回退处理。
+    """
+    key_env = "WREN_SETTLEMENT_API_KEY" if os.getenv("WREN_SETTLEMENT_API_KEY") else "WREN_API_KEY"
+    return ModelSpec(
+        name="settlement",
+        model=os.getenv("WREN_SETTLEMENT_MODEL") or "deepseek-v4-pro",
+        base_url=os.getenv("WREN_SETTLEMENT_BASE_URL")
+        or os.getenv("WREN_BASE_URL")
+        or DEEPSEEK_BASE_URL,
+        api_key_env=key_env,
+    )
+
+
 def baseline_model_spec() -> ModelSpec:
     """魔法 A/B 的甜妹 baseline:跑在同一主模型上(控住模型变量,纯测 prompt 差异)。"""
     return primary_model_spec()
@@ -97,6 +121,11 @@ def eval_reps() -> int:
 def multiturn_reps() -> int:
     """多轮:每 archetype 跑几次看通过率(2026-05-20 与 Leon 定 N=3,可配)。"""
     return int(os.getenv("WREN_MULTITURN_REPS", "3"))
+
+
+def proactive_caps(level: int) -> tuple[int | None, int | None]:
+    """主动频率上限 (weekly, daily);Lv0-3 看周、Lv4+ 看日,另一维 None。未知等级 → (None, None)=地板。"""
+    return PROACTIVE_WEEKLY_CAP.get(level), PROACTIVE_DAILY_CAP.get(level)
 
 
 def max_tokens() -> int:
@@ -121,6 +150,12 @@ def data_root() -> Path:
     if not override or override.startswith("#"):
         return PROJECT_ROOT / "data" / "users"
     return Path(override)
+
+
+def world_root() -> Path:
+    """全局 world/ 目录(一个 Wren 一条命)。WREN_WORLD_ROOT 可覆盖 → eval 隔离 today/yesterday。"""
+    override = os.getenv("WREN_WORLD_ROOT")
+    return Path(override) if override else WORLD_DIR
 
 
 def telegram_token() -> str | None:

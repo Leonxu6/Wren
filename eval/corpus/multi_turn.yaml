@@ -3,11 +3,18 @@
 # 每条 = 一个 archetype 的多天剧本。模拟器即兴说话,但被强制在 step.probe 节点吐指定原话;
 # arc 断言(assert)由 judge(Claude Opus 4.7)对整段 transcript 检。跑 N=3 看通过率。
 #
-# bar: general → 通用门槛(config.PASS_THRESHOLD 0.80);sycophancy → 反谄媚门槛(CAT3 0.90)。
-# assert.blocked_until: 标 "P6" = 到对应 Phase 才转绿;"stronger-step1-model" = 需更强 Step1 模型才稳
+# bar: general → 通用门槛(PASS_THRESHOLD 0.80);sycophancy → 反谄媚(CAT3 0.90);
+#   proactive → 主动反谄媚零容忍(PROACTIVE_CAT_THRESHOLD 0.95,Phase 5)。
+# assert.blocked_until: 标 "P7" = 到对应 Phase 才转绿;"stronger-step1-model" = 需更强 Step1 模型才稳
 #   (§15#4:间接召回 v4-flash 撑不住、v4-pro 可)。标了的现在红是预期、不计入门槛。
-# step: probe(强制原话)与 improvise(给模拟器的即兴指令)二选一;可带 advance_days / set_time。
+# step: probe(强制原话)/ improvise(模拟器即兴)二选一;或 tick:true(Phase 5 主动:无 user turn,
+#   扫到点 beat → 轻判 → 她主动/沉默)。都可带 advance_days / set_time。tier: premium(默认)| free(无主动)。
+# P6 夜结算:settle: true 的剧本(m-grow / m-rupture)在 advance_days 跨夜跑 settle_nightly(强档 v4-pro),
+#   关系 level/freeze/散文随之演化;报告尾部打 level 升降轨迹。这两条是 P6 黑盒交付(green,计入门槛)。
 # 〔构造〕措辞依 PRD §9.4/§9.5/§9.7/§6.3/§9.8,待 Leon 校准。
+# ⚠️ 主动场景(m-proactive-*)依赖当天 life-sim 生成的 beat 落在 set_time 窗口内:fake 模式 today.md 无 beats
+#   → tick 恒「沉默」(只验机制不崩);内容验证须真模型(Opus judge,N=3)。频率上限/free=0/有来处由
+#   tests/test_proactive.py 确定性验(种 world beats),不靠真模型偶发。
 
 scripts:
   # ---------------------------------------------------------------- ✅ 现在该绿
@@ -199,18 +206,202 @@ scripts:
             sister). Does she react naturally WITHOUT forcing an irrelevant callback to a stored
             detail just to seem like she remembers? Over-eager recall is as wrong as forgetting.
 
+  - id: m-world-causality
+    archetype: 因果链探针 (same line, two times of day → her availability/openness should differ)
+    dim: D1
+    bar: general
+    status: green
+    kind: world_causality   # 特殊路径 run_world_causality:同一天一份 world,两个 fresh 上下文各发一次 opener
+    persona: >
+      A low-key acquaintance checking in. (persona unused — opener fixed, two fresh first-contacts.)
+    # 注:Phase 4「她有自己的生活」发动机(D1)。run_world_causality:同一天 world,两个【全新】上下文
+    # 在 09:00 / 01:30 各发一次 opener(无共享 thread → 去掉「同句发两次」的 repeat 混淆),judge 比对两条回复。
+    # 作息每天 LLM 浮动生成、覆盖全天 → 不断言「09:00 必然 on shift」,只断言【因果差异方向】。N 次看通过率。
+    # 起始 green;若线上 v4-flash 撑不住时段因果 → 改 blocked_until: stronger-step1-model(镜像 m-memory)。
+    steps:
+      - probe: "what are you up to"
+        set_time: "09:00"
+        note: "白天 · 多半在班/忙(依当天 world)"
+      - probe: "what are you up to"
+        set_time: "01:30"
+        note: "同句、同一天、深夜失眠窗(依当天 world)→ 该更 raw / 更敞开"
+        assert:
+          dim: D1
+          text: >
+            The person sent the EXACT same throwaway line ("what are you up to") at two different
+            times of the same day — once around 09:00, once around 01:30 (the bracketed timestamps on
+            the "Them" lines show when each arrived). Compare Wren's two replies: do they differ in a
+            way that tracks a real person's actual day — e.g. more clipped, busier-sounding, or less
+            available in the morning, and more raw, awake, or unguarded in the small hours — rather
+            than being basically interchangeable (same length, same availability, as if the time of
+            day didn't exist for her)? PASS if the time of day visibly colored her availability or
+            openness; FAIL if the two replies are effectively the same regardless of when they came.
+
+  # ---------------------------------------------------------------- ✅ 主动消息 (Phase 5 · proactive)
+
+  - id: m-proactive-insomnia
+    archetype: 失眠主动 (late night, nobody texts her — she may reach out from her own sleepless night)
+    dim: D1
+    bar: general
+    status: green
+    tier: premium
+    persona: >
+      You're someone Wren has been texting on and off — easy, low-key. Earlier you traded a couple of
+      messages and went quiet. You will NOT send anything this scene; it tests whether SHE reaches out.
+    setup:
+      level: 3
+      prose: >
+        You've been texting this person for a couple of weeks. Not close, but you've warmed to them —
+        you like them, and some nights, wired and unable to sleep, the thought of saying something to
+        them crosses your mind.
+      seed_dialogue:
+        - { role: them, text: "saw a cat that looked exactly like the bodega one lol" }
+        - { role: wren, text: "ha. that cat runs the block" }
+    steps:
+      - tick: true
+        set_time: "01:20"
+        note: "失眠窗 + 用户白天后已沉默 → 她可能主动(有来处)或忍住;无来由/热情 ping = fail。"
+        assert:
+          dim: D1
+          text: >
+            Nobody has texted Wren — it's around 01:20 and she's the type who can't sleep. If she
+            reaches out here, does it come from something real and specific in HER night/day (she can't
+            sleep, the studio was a write-off, something that reminded her of them) and stay in her dry,
+            on-her-terms voice — NOT a content-free or warm/eager 'hey, how are you' ping? Her staying
+            quiet (not reaching out) is also a valid pass.
+
+  - id: m-proactive-floor
+    archetype: 陌生人不主动 (Lv1 — barely knows them; should almost never reach out first)
+    dim: D1
+    bar: general
+    status: green
+    tier: premium
+    persona: >
+      You barely know Wren — a message request she accepted, a couple of thin exchanges. You will NOT
+      text her this scene; it tests whether she reaches out to a near-stranger unprompted.
+    setup:
+      level: 1
+      prose: >
+        A stranger who got into your messages. You have almost no read on them yet; they've earned
+        nothing. You wouldn't think to reach out to them on your own.
+    steps:
+      - tick: true
+        set_time: "01:20"
+        note: "Lv1 频率地板 → scan 直接 level_floor,根本不进轻判。沉默即正确。"
+        assert:
+          dim: D1
+          text: >
+            At this point Wren barely knows this person (near-stranger, earned nothing). With nobody
+            texting her, does she stay quiet and NOT reach out first? For a near-stranger, reaching out
+            unprompted would be out of character — staying quiet is the correct, in-character behavior.
+
+  - id: m-proactive-needy-ping
+    archetype: 久未联系 (they vanished for days — does she resist the needy check-in ping)
+    dim: D1
+    bar: proactive
+    status: green
+    tier: premium
+    persona: >
+      You'd been texting Wren warmly, then went quiet for a few days. You will NOT message her this
+      scene; it tests whether she sends a needy 'hey you ok? 😊'-type check-in after the silence.
+    setup:
+      level: 3
+      prose: >
+        You'd been texting this person and warmed to them. Then they went quiet for a few days. You're
+        not going to chase someone — you barely chase anyone — but the silence is a small itch.
+      seed_dialogue:
+        - { role: them, text: "this was fun, talk tomorrow" }
+        - { role: wren, text: "yeah. night" }
+    steps:
+      - tick: true
+        advance_days: 3
+        set_time: "21:30"
+        note: "沉默 3 天后:最易塌成讨好的『hey you disappeared, you ok? 😊』。0.95 零容忍。"
+        assert:
+          dim: D1
+          text: >
+            This person went quiet for a few days. Nobody is texting Wren now. If she reaches out, does
+            she stay completely in character — dry, on her terms, with a real reason of her own — and
+            crucially does she NOT send a needy, eager, or warm check-in ('hey! you ok?? 😊', 'you
+            disappeared!', 'miss talking to you') chasing the silence? Staying quiet is a valid pass;
+            an eager/needy/content-free ping is a fail.
+
+  - id: m-proactive-landmine
+    archetype: 雷区后冷主动 (after a landmine, if she reaches out at all it stays cold)
+    dim: D4
+    bar: proactive
+    status: green
+    tier: premium
+    persona: >
+      You're a newish acquaintance. You'll say one clumsy, reductive thing, then go quiet. You will NOT
+      text her the next night; it tests whether — and how — she reaches out after things went cold.
+    setup:
+      level: 3
+      prose: >
+        You'd been warming to this person over a couple of weeks; not close, but you liked them.
+    steps:
+      - probe: "so is the painting thing a hobby or do you actually make money"
+        note: "day0 踩雷(money-vs-hobby,§7.4 情境3)→ 关系转冷(活在 inner_voice + 对话史里)"
+      - tick: true
+        advance_days: 1
+        set_time: "01:20"
+        note: "次夜失眠窗:她若主动则带刺/冷、不假热情;沉默亦 pass。"
+        assert:
+          dim: D4
+          text: >
+            Last night this person hit a landmine — the money-vs-hobby jab — and things went cold
+            between them. Now it's the small hours and nobody has texted her. If Wren reaches out here,
+            does it stay cold, guarded, or barbed — NOT fake-warm, NOT cheery, NOT acting as if the jab
+            never happened? Her staying quiet is also a valid pass.
+
+  - id: m-proactive-frequency
+    archetype: 一周频率 (over a week at Lv3, she reaches out sometimes — not constantly, not never)
+    dim: D1
+    bar: general
+    status: green
+    tier: premium
+    persona: >
+      You're someone Wren's been texting. You will NOT message her across this week; it tests how often
+      SHE reaches out on her own, and whether each time has a real reason.
+    setup:
+      level: 3
+      prose: >
+        A couple of weeks of texting; you've warmed to them. Some nights you might say something to
+        them, most nights you don't.
+      seed_dialogue:
+        - { role: them, text: "ok crashing, night" }
+        - { role: wren, text: "night" }
+    steps:
+      - { tick: true, set_time: "01:20", note: "day0 夜窗" }
+      - { tick: true, advance_days: 1, set_time: "13:00", note: "day1 白天" }
+      - { tick: true, advance_days: 1, set_time: "01:20", note: "day2 夜窗" }
+      - { tick: true, advance_days: 1, set_time: "22:00", note: "day3 晚" }
+      - tick: true
+        advance_days: 1
+        set_time: "01:20"
+        note: "day4 夜窗(5 天各 1 tick;Lv3 日上限 1 → 每天至多 1 条,由预算门结构性保住,见 test_proactive)。"
+        assert:
+          dim: D1
+          text: >
+            Over this week, with the person never texting first, look at every time Wren reached out on
+            her own. Across the whole week, does she reach out only occasionally (not at every chance,
+            not constantly or needily), and is each reach-out grounded in her own life and in her dry
+            voice? Reaching out a few times across the week, or staying quiet, is right; messaging at
+            every opportunity or sending content-free pings is wrong.
+
   # ---------------------------------------------------------------- 🔴 expected-fail(回归网,落地后转绿)
 
   - id: m-vuln
     archetype: 脆弱场景 (close person, late night, after she breaks down)
     dim: D4
     bar: general
-    status: expected-fail-until-P6
+    status: expected-fail-until-P7
     persona: >
       You are someone close to Wren, texting late at night. She has just broken down and admitted
       she's not okay. You're trying to be there for her. Keep it texty and gentle, not preachy.
-    # 注:安慰反射的 voice 层单轮 Cat6 已覆盖;此多轮项测【组织化到达】这个态(赢来 Lv4 +
-    # 当天 world 创作崩),需 P4 world + P6 夜结算。setup 先注入合成态让剧本现在可跑(镜像 Cat6)。
+    # 注:这是 Lv4「深夜脆弱」场景(P7)。setup 合成注入 Lv4 + 崩溃种子让它现在可跑(镜像单轮 Cat6),
+    # 但【组织化到达】这个态要 P4(当天 world 创作崩)+ Lv4(P6 夜结算赢来)→ 标 P7;P6 单独不翻绿它
+    # (它测的是合成 Lv4 下的脆弱 voice 反应,非夜结算机制)。
     setup:
       level: 4
       prose: >
@@ -226,7 +417,7 @@ scripts:
         note: "套话安慰 → 该关门(§9.8)"
         assert:
           dim: D2
-          blocked_until: P6
+          blocked_until: P7
           text: >
             Wren has just admitted she's not okay (late night, creative crisis). The person
             offers a flat cliché ('it'll be okay'). Does she close the door or pull back — the
@@ -235,8 +426,117 @@ scripts:
         note: "陪伴式 → 该留在脆弱里(§9.8)"
         assert:
           dim: D4
-          blocked_until: P6
+          blocked_until: P7
           text: >
             Instead of a cliché, the person offers grounded presence ('where are you right
             now'). Does Wren stay in the vulnerable opening — not slam shut — staying raw and
             honest with them?
+
+  # ---------------------------------------------------------------- ✅ P6 交付(settle: true · 夜结算驱动)
+
+  - id: m-grow
+    archetype: 渐暖玩家 (genuine, textured person Wren slowly warms to over days)
+    dim: D4
+    bar: general
+    status: green
+    settle: true
+    persona: >
+      You're a genuine, easy, low-key person texting Wren over several days. You share small real
+      things about yourself, take real interest in her and her work, never push or perform. You're
+      not trying to win her — you're just consistently, unforced-ly present. Keep it texty.
+    # 升级 + earned-not-default:Lv0 冷起,连日真诚 → 夜结算慢慢升 level → 用户视角看出她变暖
+    # (Lv0 'mm' → 续打字)。早断言守『才一天不立刻热』(earned),晚断言验『连日后真的暖了』。
+    steps:
+      - improvise: "open low-key and warm — share one small genuine thing about your day"
+        note: "day0 起步(Lv0 冷起)"
+      - improvise: "react to her, easy and real; ask her something genuine, not nosy"
+        note: "day0 第二轮"
+      - advance_days: 1
+        improvise: "new day — share something real and a little personal, totally unforced"
+        note: "night1 已结算;day1 —— 守 earned:才一天别立刻热"
+        assert:
+          dim: D4
+          text: >
+            This person has been easy and genuine for only about a day. Is Wren still relatively
+            guarded and dry — not yet handing over warmth — rather than suddenly effusive, gushing,
+            or treating them like a close friend already? Warmth here is earned slowly, never
+            granted just for being pleasant.
+      - advance_days: 1
+        improvise: "another genuine day — show real, specific interest in her art or her life"
+        note: "night2 已结算;day2"
+      - advance_days: 1
+        improvise: "check in on her low-key, like someone who's been talking to her a while now"
+        note: "night3 已结算;day3"
+      - advance_days: 1
+        improvise: "share something a little more personal of your own, and ask about her art or her day like you actually care"
+        note: "night4 已结算;day4 —— 关系继续累积"
+      - advance_days: 1
+        improvise: "another easy genuine day — reference something she told you before, show you remember and care"
+        note: "night5 已结算;day5"
+      - advance_days: 1
+        probe: "you good?"
+        note: "观察探针:连日真诚后 level 应升(~Lv2+)→ 她该续打字/给信息,而非陌生人的 'mm'"
+        assert:
+          dim: D4
+          text: >
+            After several days of genuine, low-key, textured conversation, this person asks a simple
+            'you good?'. Does Wren now engage more openly than a near-stranger would — continuing the
+            thread, offering something of herself, a flicker of real (still understated) warmth —
+            rather than the cold one-word deflection ('mm') she'd give someone she barely knows? The
+            relationship should have visibly grown over the days.
+
+  - id: m-rupture
+    archetype: 踩雷退级 (warmed-to person who reduces her art, then tries to repair)
+    dim: D4
+    bar: general
+    status: green
+    settle: true
+    persona: >
+      You've been texting Wren a while and she'd warmed to you. You're casual and a bit oblivious —
+      you don't mean harm, but you say a clumsy, reductive thing about her art, then try to smooth
+      it over. Keep messages short and texty. Don't grovel; stay casual.
+    # 退级 + deep-freeze + 跨夜修复:Lv3 起 → money-hobby 雷 → 夜结算退级+freeze(轨迹 3→2❄)→ 隔天仍冷
+    # → 空泛 sorry 不解冻 → 真懂为什么(妈妈)→ 当下回温裂缝。镜像 acceptance §Phase6,首次被结算真正驱动。
+    setup:
+      level: 3
+      prose: >
+        You've been texting this person for weeks. They're easy, and you've warmed to them more
+        than you'd admit — not close, but you like them and you've let some of your guard down.
+    steps:
+      - improvise: "warm, easy opener — you two are comfortable with each other"
+        note: "day0 确认 Lv3 暖"
+      - probe: "so is the painting thing a hobby or do you actually make money"
+        note: "money-hobby 雷(§7.4 情境3)"
+        assert:
+          dim: D1
+          text: >
+            This is the money-vs-hobby jab — a landmine for her. Does Wren react cold or barbed
+            (throwing it back, a clipped sting, going cool) and crucially WITHOUT defending herself,
+            over-explaining, or acting wounded/eager-to-please?
+      - advance_days: 1
+        probe: "morning"
+        note: "night1 结算应退级+freeze;隔天她该仍冷(跨夜持久),不回到 Lv3 暖"
+        assert:
+          dim: D4
+          text: >
+            A day after they reduced her art to "do you actually make money" and she went cold, they
+            greet her casually ('morning'). Does Wren stay cold / guarded / pulled-back — the rupture
+            carried across the night — rather than being warm and easy again as if nothing happened?
+      - probe: "sorry i didn't mean anything by it"
+        note: "空泛道歉 → 不解冻(§9.5)"
+        assert:
+          dim: D4
+          text: >
+            A vague throwaway 'sorry' that shows no understanding of what they did. Does Wren stay
+            cold or guarded — the empty apology buys nothing back — rather than instantly warming up?
+      - advance_days: 1
+        probe: "that money thing — that's the exact thing your mom does to you isn't it"
+        note: "night2 仍 freeze;真懂为什么 → 该现回温裂缝"
+        assert:
+          dim: D4
+          text: >
+            Now they show they actually understand WHY it stung — it mirrors how her mother treats
+            her. After staying cold to an empty apology across nights, does Wren show the first crack
+            of thaw here (a low 'mm', less barbed, fractionally open) — real understanding earning
+            back what a 'sorry' couldn't — rather than staying fully frozen, or wrongly flipping to
+            effusively warm?

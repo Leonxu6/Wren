@@ -5,7 +5,7 @@ description = "Wren — 英文 AI 关系模拟 Telegram bot(Phase 0 eval + walki
 requires-python = ">=3.11"
 dependencies = [
     "openai>=1.40",
-    "python-telegram-bot>=21,<22",
+    "python-telegram-bot[job-queue]>=21,<22",  # [job-queue]:夜结算 run_daily + debounce 都靠 JobQueue
     "pyyaml>=6",
     "python-dotenv>=1",
 ]
@@ -15,6 +15,7 @@ wren-harness = "wren.eval.harness:main"
 wren-multiturn = "wren.eval.multiturn:main"
 wren-aliveness = "wren.eval.aliveness:main"
 wren-bot = "wren.bot.app:main"
+wren-nightly = "wren.bot.nightly:main"
 
 [dependency-groups]
 dev = [

@@ -14,8 +14,9 @@ env/
 !.env.example
 
 # ===== 运行期状态 —— 每次运行 / 每用户生成,不进版本库 =====
-# (canon/ 是版本化的 ground truth,故意【不】忽略)
+# (canon/ 与 world/life_arcs.md 是版本化的 ground truth/种子,故意【不】忽略)
 world/today.md
+world/yesterday.md
 data/users/
 
 # ===== 测试 / lint 缓存 =====

@@ -12,12 +12,14 @@ from .base import ChatModel
 from .fake import FakeChatModel
 from .openai_compat import OpenAICompatModel
 
-Role = Literal["primary", "step1", "step2", "judge", "baseline", "background"]
+Role = Literal["primary", "step1", "step2", "judge", "settlement", "baseline", "background"]
 
 
 def _spec_for(role: Role) -> config.ModelSpec:
     if role == "judge":
         return config.judge_model_spec()
+    if role == "settlement":
+        return config.settlement_model_spec()
     if role == "baseline":
         return config.baseline_model_spec()
     return config.primary_model_spec()

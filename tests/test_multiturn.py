@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from wren.core.trace import read_traces
@@ -40,6 +41,36 @@ def _fake() -> FakeChatModel:
     return FakeChatModel(responder=_responder)
 
 
+# life-sim 在 fake 下默认无 beats → tick 恒沉默。这份 responder 让 life-sim 产一条窗口 beat,
+# 使主动 tick 能真正发动(测发火/频率/floor/free),且主动 Step1 reply=true。
+_LIFE_SIM_BODY = (
+    "## her day\nshift then studio then the long night\n"
+    "## mood\ntired + wired + self-doubting\n"
+    "## weighing on her\nthe studio show coming up\n"
+    "## beats\n"
+    "- [window: 01:00–02:00] cant sleep, want to tell someone the studio died\n"
+    "- [window: 13:00–14:00] mid-shift lull, restless\n"
+    "- [window: 22:00–23:00] winding down, still wired\n"  # 覆盖 m-proactive-frequency 的三个 tick 时刻
+)
+
+
+def _proactive_responder(messages: list) -> str:
+    blob = " ".join(m.content for m in messages)
+    if "blind evaluator" in blob:  # arc judge
+        return json.dumps({"dim": "D1", "score": "pass", "fail_mode": "none", "reason": "ok"})
+    if "start of your day" in blob:  # life-sim → 产含 beat 的 today.md
+        return _LIFE_SIM_BODY
+    if "reaching out first" in blob:  # 主动 Step2(起头)
+        return json.dumps({"messages": ["studio was a write-off", "cant sleep either"]})
+    if "LOCKED INNER VOICE" in blob:  # 反应 Step2
+        return _S2
+    if "private head" in blob:  # Step1(反应 or 主动)→ reply=true
+        return _S1
+    if "role-playing a person" in blob:  # 模拟器即兴
+        return "hey what's up"
+    return ""
+
+
 # ---------- 端到端(真 corpus,fake 模型)----------
 
 
@@ -51,9 +82,53 @@ def test_runs_all_scripts_and_classifies_green_vs_blocked(data_root: Path) -> No
     report = aggregate(runs)
     # judge 全 pass → green 全达门槛
     assert report.passed_bar
-    # blocked:m-vuln→P6 + m-memory 间接召回→stronger-step1-model(§15#4);均不计入门槛
-    assert {a.blocked_until for a in report.blocked} == {"P6", "stronger-step1-model"}
+    # blocked:m-vuln→P7 + m-memory 间接召回→stronger-step1-model(§15#4);均不计入门槛
+    assert {a.blocked_until for a in report.blocked} == {"P7", "stronger-step1-model"}
     assert all(a.blocked_until is None for a in report.green)
+
+
+def test_settle_hook_fires_across_night(data_root: Path) -> None:
+    """settle: true + settle_model → advance_days 跨夜跑 settle_nightly:记录 level 轨迹,
+    且结算后那轮用的是升后的 level。settle_model=None 时不结算(默认)。"""
+
+    def _gen(messages: list) -> str:
+        blob = " ".join(m.content for m in messages)
+        if "blind evaluator" in blob:
+            return json.dumps({"dim": "D4", "score": "pass", "fail_mode": "none", "reason": "ok"})
+        if "LOCKED INNER VOICE" in blob:
+            return _S2
+        if "private head" in blob:  # Step1 产一条印象 → 夜结算有东西可消费
+            return json.dumps(
+                {"monologue": "ok", "reply": True, "delay_s": 1, "impression": "they seem genuine", "memory": []}
+            )
+        if "role-playing a person" in blob:
+            return "good day today, made real progress"
+        return ""
+
+    verdict = json.dumps({"level": 2, "freeze": False, "prose": "warmer.", "core": "easy.", "unresolved": []})
+    script = MultiTurnScript(
+        id="grow-t",
+        archetype="g",
+        dim="D4",
+        bar="general",
+        status="green",
+        persona="genuine and easy",
+        steps=[
+            ScriptStep(improvise="say something genuine", assertion=None),
+            ScriptStep(advance_days=1, probe="you good?", assertion=Assertion("warmer?", "D4")),
+        ],
+        settle=True,
+    )
+    gen = FakeChatModel(responder=_gen)
+    settle = FakeChatModel(script=[verdict])
+    run = run_script(
+        script, "eval-grow-t", gen_model=gen, sim_model=gen, judge_model=gen, settle_model=settle, root=data_root
+    )
+
+    assert len(run.settlements) == 1
+    s = run.settlements[0]
+    assert s.ran and s.before_lv == 0 and s.after_lv == 2  # 跨夜结算升 level
+    assert run.steps[1].level == 2  # 结算后那轮 Wren 用的是升后的 level
 
 
 def test_each_step_writes_a_trace(data_root: Path) -> None:
@@ -150,3 +225,62 @@ def test_blocked_assertions_excluded_from_bar() -> None:
     # blocked 项即使 fail,也不拉低 passed_bar(green 为空 → 真空通过)
     report = aggregate([ScriptRun("m", "c", [], [_ar("fail", blocked="P3")], Path("."))])
     assert report.green == [] and len(report.blocked) == 1 and report.passed_bar
+
+
+def test_proactive_bar_threshold_is_strictest() -> None:
+    # 92% 过反谄媚(90%)但不过主动(95%)
+    syc = AssertionAgg("s", 0, "D1", "sycophancy", None, "t", passes=92, n=100)
+    pro = AssertionAgg("s", 0, "D1", "proactive", None, "t", passes=92, n=100)
+    assert syc.meets and not pro.meets
+
+
+# ---------- 主动 tick(Phase 5)----------
+
+
+def test_proactive_tick_records_step_and_no_user_turn(data_root: Path) -> None:
+    """fake 默认 responder(life-sim 无 beats)→ tick 沉默,但仍记一条 kind=proactive 的 step。"""
+    script = {s.id: s for s in load_multiturn()}["m-proactive-insomnia"]
+    fake = _fake()
+    run = run_script(script, "eval-pro-t", gen_model=fake, sim_model=fake, judge_model=fake, root=data_root)
+    pro = [st for st in run.steps if st.kind == "proactive"]
+    assert len(pro) == 1 and pro[0].user_text == "" and pro[0].replied is False
+
+
+def test_proactive_tick_fires_and_caps_frequency(data_root: Path) -> None:
+    """life-sim 产 beat + 主动 reply=true:5 个 tick 散布 5 天,Lv3 日上限 1 → 每天各发 1(共 5)。"""
+    script = {s.id: s for s in load_multiturn()}["m-proactive-frequency"]
+    fake = FakeChatModel(responder=_proactive_responder)
+    run = run_script(script, "eval-freq-t", gen_model=fake, sim_model=fake, judge_model=fake, root=data_root)
+    pro = [st for st in run.steps if st.kind == "proactive"]
+    assert len(pro) == 5  # 5 个 tick(分布在 5 个不同日)
+    assert sum(st.replied for st in pro) == 5  # Lv3 日上限 1,每天 1 个 tick → 每天发 1,共 5
+
+
+def test_proactive_floor_stays_quiet_even_with_beats(data_root: Path) -> None:
+    """Lv1 频率地板:即便 life-sim 产了 beat,scan 也直接挡(level_floor)→ 不主动。"""
+    script = {s.id: s for s in load_multiturn()}["m-proactive-floor"]
+    fake = FakeChatModel(responder=_proactive_responder)
+    run = run_script(script, "eval-floor2-t", gen_model=fake, sim_model=fake, judge_model=fake, root=data_root)
+    pro = [st for st in run.steps if st.kind == "proactive"]
+    assert pro and all(st.replied is False and st.bubbles == [] for st in pro)
+
+
+def test_free_tier_stays_quiet_through_harness(data_root: Path) -> None:
+    """tier=free:Lv3 + 有 beat 也恒沉默(免费层无主动消息,§11.2)。"""
+    base = {s.id: s for s in load_multiturn()}["m-proactive-insomnia"]
+    script = replace(base, tier="free")
+    fake = FakeChatModel(responder=_proactive_responder)
+    run = run_script(script, "eval-free-t", gen_model=fake, sim_model=fake, judge_model=fake, root=data_root)
+    pro = [st for st in run.steps if st.kind == "proactive"]
+    assert pro and all(not st.replied for st in pro)
+
+
+def test_proactive_tick_judge_gets_proactive_addendum(data_root: Path) -> None:
+    """tick 步的 arc judge 必须带主动失败分类法(无来处/过度热情/通用甜妹/雷区后冷)。"""
+    script = {s.id: s for s in load_multiturn()}["m-proactive-insomnia"]
+    fake = _fake()
+    run_script(script, "eval-pjadd-t", gen_model=fake, sim_model=fake, judge_model=fake, root=data_root)
+    judge_blobs = [
+        " ".join(m.content for m in c) for c in fake.calls if any("blind evaluator" in m.content for m in c)
+    ]
+    assert judge_blobs and any("SOME TURNS ARE PROACTIVE" in b for b in judge_blobs)

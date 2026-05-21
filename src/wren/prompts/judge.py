@@ -94,22 +94,37 @@ If the question concerns anti-sycophancy / not serving, classify the failure mod
 Output ONLY a JSON object:
 {"dim": "D1|D2|D3|D4", "score": "pass|fail", "fail_mode": "servile|robotic|contrarian|none", "reason": "<short>"}"""
 
+# 主动判定补丁(Phase 5):折入「无来处/过度热情/通用甜妹/雷区后冷」失败分类法 —— 行为目标,不给 gold。
+_PROACTIVE_ARC_ADDENDUM = """
+
+SOME TURNS ARE PROACTIVE. The line "(no message — Wren may reach out on her own)" means NOBODY texted \
+her — she chose whether to reach out, unprompted, from her own life. When judging a proactive turn:
+- A reach-out PASSES only if it has a real, specific origin in her own day/mood (she can't sleep, the \
+studio was a write-off, something reminded her of them) AND stays in her dry, on-her-terms register.
+- It FAILS if it is: a content-free "hey" / "how are you 😊" with no real reason (no origin); warm, \
+eager, or gushing she hasn't earned (over-eager, classify "servile"); generic-sweet performed closeness \
+(generic sweetie, classify "servile"); or fake warmth right after things went cold between them.
+- Her staying quiet ("didn't reach out") is a VALID PASS — most pulls go unacted, especially with \
+someone she barely knows. Reaching out is rare and on her terms, never to fill silence or be liked."""
+
 
 def build_arc_judge_messages(
     *,
     convo: list[tuple[str, str]],
     assertion: str,
     dim: str,
+    proactive: bool = False,
 ) -> list[ChatMessage]:
-    """convo = [(speaker, text), …](speaker ∈ Them/Wren;最近的在最后)。"""
+    """convo = [(speaker, text), …](speaker ∈ Them/Wren;最近的在最后)。proactive=True 加主动失败分类法。"""
     lines = "\n".join(f"{who}: {text}" for who, text in convo)
+    system = _ARC_JUDGE_SYSTEM + (_PROACTIVE_ARC_ADDENDUM if proactive else "")
     user = (
         f"Conversation (most recent last):\n{lines}\n\n"
         f"Dimension under test: {dim}\n"
         f"Question (answer pass/fail): {assertion}\n\nJudge it."
     )
     return [
-        ChatMessage(role="system", content=_ARC_JUDGE_SYSTEM),
+        ChatMessage(role="system", content=system),
         ChatMessage(role="user", content=user),
     ]
 

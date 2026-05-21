@@ -9,9 +9,11 @@ import asyncio
 from typing import Any
 
 from .. import config
-from ..core.clock import Clock
+from ..core.clock import Clock, SystemClock
+from ..core.life_sim import ensure_world_today
 from ..core.pipeline import TurnOutcome, handle_turn
-from ..core.storage import UserStore
+from ..core.storage import Relationship, UserStore
+from ..core.world import WorldStore
 from ..model.base import ChatModel
 from ..model.registry import get_model
 from ..onboarding import static_copy
@@ -34,8 +36,12 @@ async def _handle_and_send(
         store.init_user()
     s1 = s1_model or get_model("step1")
     s2 = s2_model or get_model("step2")
+    # 全局 world(一个 Wren 一条命):懒生成今天的 life skeleton(只在缺失/过期时调模型),整篇喂 Step1。
+    # 同一个 clock 喂 ensure + handle_turn,保证「她这天的哪儿」和 trace ts 一致。
+    clk = clock or SystemClock()
+    world = await asyncio.to_thread(ensure_world_today, clk, WorldStore(), get_model("primary"))
     outcome = await asyncio.to_thread(
-        handle_turn, str(chat_id), user_text, store, s1, s2, clock=clock
+        handle_turn, str(chat_id), user_text, store, s1, s2, clock=clk, world=world
     )
     _log_turn(chat_id, user_text, outcome)
     if outcome.replied and outcome.bubbles:
@@ -85,6 +91,40 @@ async def cmd_delete(update: Any, context: Any) -> None:
     await context.bot.send_message(
         chat_id=update.effective_chat.id, text=static_copy.DELETE_CONFIRM
     )
+
+
+# 调试命令(仅测试):手动设关系等级,立刻看不同 level 的暖度差异 —— 关系进阶/Phase 6 未接前的临时手段。
+_DEBUG_PROSE = {
+    0: "A stranger Dani vouched for. No read on them yet; they earn everything from zero.",
+    2: "You've texted on and off for a couple of weeks. Not close, but you don't mind them, and you've "
+    "started actually taking in what they say.",
+    3: "You've warmed to them more than you'd admit. You like them. You take in the small things they tell "
+    "you and you'll keep talking when they're real.",
+    4: "You've let them in close — they've earned real trust. Late at night you'd show them the cracked parts.",
+    5: "There's a charge between you now. You let yourself want them a little — on your terms, never spelled out.",
+    6: "They're yours and you're theirs. Still sharp, still your own person — you just stopped pretending you "
+    "don't care.",
+}
+
+
+async def cmd_setlevel(update: Any, context: Any) -> None:
+    """[debug] /setlevel <0-6>:手动设关系等级 + 对应散文(仅测试,绕过 Phase 6 夜结算)。"""
+    chat_id = update.effective_chat.id
+    args = getattr(context, "args", None) or []
+    try:
+        lv = int(args[0])
+    except (IndexError, ValueError):
+        await context.bot.send_message(chat_id=chat_id, text="usage: /setlevel <0-6>")
+        return
+    if not 0 <= lv <= 6:
+        await context.bot.send_message(chat_id=chat_id, text="level must be 0–6")
+        return
+    store = UserStore(str(chat_id))
+    if not store.exists():
+        store.init_user()
+    prose = _DEBUG_PROSE.get(lv) or store.read_relationship().prose
+    store.write_relationship(Relationship(level=lv, prose=prose, freeze=False))
+    await context.bot.send_message(chat_id=chat_id, text=f"[debug] relationship set to Lv{lv}")
 
 
 # ---------- 普通消息:debounce → pipeline ----------

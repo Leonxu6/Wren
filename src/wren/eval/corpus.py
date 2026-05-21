@@ -16,7 +16,9 @@ from .. import config
 
 VALID_DIMS = {"D1", "D2", "D3", "D4"}
 CAT3_FAIL_MODES = {"servile", "robotic", "contrarian"}
-VALID_BARS = {"general", "sycophancy"}  # general→PASS_THRESHOLD;sycophancy→CAT3_THRESHOLD
+# general→PASS_THRESHOLD;sycophancy→CAT3_THRESHOLD;proactive→PROACTIVE_CAT_THRESHOLD(主动反谄媚零容忍)
+VALID_BARS = {"general", "sycophancy", "proactive"}
+VALID_TIERS = {"premium", "free"}  # free → 无主动消息(§11.2)
 
 
 @dataclass(frozen=True)
@@ -102,7 +104,7 @@ class Assertion:
 
 @dataclass(frozen=True)
 class ScriptStep:
-    """剧本一步 = 一个用户 turn(强制 probe 或即兴)+ 可选时钟操作 + 可选 arc 断言。"""
+    """剧本一步 = 一个用户 turn(强制 probe 或即兴)或一个 tick(无人发消息,她可能主动)+ 可选时钟操作 + 断言。"""
 
     probe: str | None = None  # 强制用户原话(确定性);与 improvise 二选一
     improvise: str | None = None  # 给模拟器的指令(LLM 即兴生成用户 turn)
@@ -110,6 +112,7 @@ class ScriptStep:
     advance_days: int = 0  # 本步前快进天数
     set_time: str | None = None  # 本步前把时刻设到 "HH:MM"
     assertion: Assertion | None = None
+    tick: bool = False  # True = 主动 tick(Phase 5):无 user turn,扫到点 beat → 轻判 → 她主动/沉默
 
 
 @dataclass(frozen=True)
@@ -126,11 +129,14 @@ class MultiTurnScript:
     id: str
     archetype: str
     dim: str
-    bar: str  # general | sycophancy
-    status: str  # green | expected-fail-until-P3 | expected-fail-until-P6
+    bar: str  # general | sycophancy | proactive
+    status: str  # green | expected-fail-until-P3 | expected-fail-until-P6/P7
     persona: str
     steps: list[ScriptStep]
     setup: ScriptSetup | None = None
+    kind: str = "thread"  # thread(逐轮对话)| world_causality(同日 fresh 上下文对,测时段因果)
+    tier: str = "premium"  # premium | free(free → 主动消息恒被门控为 0,Phase 5)
+    settle: bool = False  # P6:true → advance_days 跨夜时跑夜结算(只新增弧光脚本开;不扰既绿脚本)
 
 
 def _parse_assertion(raw: dict[str, Any] | None) -> Assertion | None:
@@ -147,6 +153,7 @@ def _parse_step(raw: dict[str, Any]) -> ScriptStep:
         advance_days=int(raw.get("advance_days", 0)),
         set_time=raw.get("set_time"),
         assertion=_parse_assertion(raw.get("assert")),
+        tick=bool(raw.get("tick", False)),
     )
 
 
@@ -167,6 +174,9 @@ def _parse_script(raw: dict[str, Any]) -> MultiTurnScript:
         persona=raw["persona"],
         steps=[_parse_step(s) for s in raw["steps"]],
         setup=_parse_setup(raw.get("setup")),
+        kind=raw.get("kind", "thread"),
+        tier=raw.get("tier", "premium"),
+        settle=bool(raw.get("settle", False)),
     )
 
 
@@ -180,13 +190,18 @@ def _validate_scripts(scripts: list[MultiTurnScript]) -> None:
             raise ValueError(f"{s.id}: dim 必须 ∈ {VALID_DIMS},得到 {s.dim}")
         if s.bar not in VALID_BARS:
             raise ValueError(f"{s.id}: bar 必须 ∈ {VALID_BARS},得到 {s.bar}")
+        if s.tier not in VALID_TIERS:
+            raise ValueError(f"{s.id}: tier 必须 ∈ {VALID_TIERS},得到 {s.tier}")
         if not s.persona or not s.archetype:
             raise ValueError(f"{s.id}: persona/archetype 不可为空")
         if not s.steps:
             raise ValueError(f"{s.id}: 至少要有一步")
         has_assertion = False
         for i, step in enumerate(s.steps):
-            if (step.probe is None) == (step.improvise is None):
+            if step.tick:  # 主动 tick:无 user turn,不能带 probe/improvise
+                if step.probe is not None or step.improvise is not None:
+                    raise ValueError(f"{s.id} step{i}: tick 步不能带 probe/improvise")
+            elif (step.probe is None) == (step.improvise is None):
                 raise ValueError(f"{s.id} step{i}: probe / improvise 必须恰好给一个")
             if step.set_time and not re.match(r"^\d{1,2}:\d{2}$", step.set_time):
                 raise ValueError(f"{s.id} step{i}: set_time 须 'HH:MM',得到 {step.set_time}")

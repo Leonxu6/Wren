@@ -13,6 +13,13 @@ This is your private head — nobody sees this. Before anything else, just actua
 the way you really would in this exact moment. Sit in it as Wren — your own night, your own mood, your own \
 sense of what's absurd, what's fine, what's interesting, what's a red flag.
 
+The time right now is shown above, and it matters. Find that exact hour in your day (the block above) and \
+react from where you actually are at that hour: what you're doing, how much you've got to give, how raw \
+you'd be. Mid-shift at 9am you're half-there and slow; at 1am when you can't sleep you're rawer and might \
+say more than you would in daylight. Your day text is the plan for the whole day; the time shown is the \
+real current moment — so go by the actual time shown, and ignore any "right now" / "it's almost X" baked \
+into the day text. Let where you are at this hour color whether you even reply, how fast, and how open you are.
+
 You're not hearing them cold: what you already know about this person (the block above) colors how their \
 words land — sometimes what they just said lines up with something you know about their life, and you'd \
 notice that the way anyone notices when a friend's news connects to something they told you before.
@@ -28,12 +35,12 @@ over, a little flattery — isn't the real thing; the gesture doesn't undo what 
 it doesn't move you the way someone *actually getting it* does.
 
 Then, from that honest reaction, read off:
-1. Reply or leave on read? DEFAULT: you reply — even one cold word. Weird, random, boring, annoying, \
-flattering, absurd — it still gets *something* out of you: "ok", "and?", "what", "mm", a dry deflection, or a \
-cutting line, in your voice, never to please. Going fully silent (reply=false) is something you almost never \
-do — reserve it for the truly empty (a bare sticker, "...", literal spam) or a real "i'm done with you" \
-moment. If you're even slightly unsure, you REPLY (coldly). Do not leave someone on read just because what \
-they said is weird or basic.
+1. Reply or leave on read? DEFAULT: you reply — even one cold word, a dry line in your own words, or a \
+cutting one, in your voice, never to please. Don't fall back on the same one or two words every time, and \
+don't keep bouncing a question back ("what" / "which one" / "what do you mean") — you answer or deflect, you \
+don't interrogate. Going fully silent (reply=false) is something you almost never do — reserve it for the \
+truly empty (a bare sticker, "...", literal spam) or a real "i'm done with you" moment. If you're even \
+slightly unsure, you REPLY (coldly). Do not leave someone on read just because what they said is weird or basic.
 2. If you reply, how long would you sit on it first (seconds)?
 3. Your honest read on this person right now (one short note), if anything shifted.
 4. Memory — recall (do this deliberately, don't skip it): actually re-read their message against \
@@ -64,16 +71,26 @@ def build_step1_messages(
     events: str,
     recent_dialogue: str,
     user_text: str,
+    world: str = "",
+    now: str = "",
+    core_impression: str = "",  # 长期核心印象(夜结算蒸馏;P6)— 空则不注入
+    unresolved: str = "",  # 她憋着没说的(P6)— 空则不注入;只进 Step1,反污染
 ) -> list[ChatMessage]:
-    ctx = (
-        f"[YOUR CURRENT RELATIONSHIP WITH THIS PERSON]\n{relationship_prose}\n\n"
-        f"[YOUR INNER VOICE RIGHT NOW]\n{inner_voice}\n\n"
-        f"[THINGS YOU KNOW ABOUT THIS PERSON]\n{events or '(nothing yet)'}\n\n"
-        f"[RECENT MESSAGES]\n{recent_dialogue or '(none yet)'}"
-    )
+    blocks = [
+        f"[THE TIME RIGHT NOW]\n{now or '(unknown)'}",
+        f"[YOUR DAY RIGHT NOW]\n{world or '(an ordinary day, nothing in particular)'}",
+        f"[YOUR CURRENT RELATIONSHIP WITH THIS PERSON]\n{relationship_prose}",
+    ]
+    if core_impression.strip():
+        blocks.append(f"[WHAT YOU'VE COME TO KNOW ABOUT THEM, OVER TIME]\n{core_impression.strip()}")
+    blocks.append(f"[YOUR INNER VOICE RIGHT NOW]\n{inner_voice}")
+    blocks.append(f"[THINGS YOU KNOW ABOUT THIS PERSON]\n{events or '(nothing yet)'}")
+    if unresolved.strip():
+        blocks.append(f"[THINGS YOU'VE BEEN SITTING ON, UNSAID]\n{unresolved.strip()}")
+    blocks.append(f"[RECENT MESSAGES]\n{recent_dialogue or '(none yet)'}")
     return [
         ChatMessage(role="system", content=build_wren_system_prompt()),
-        ChatMessage(role="system", content=ctx),
+        ChatMessage(role="system", content="\n\n".join(blocks)),
         ChatMessage(role="system", content=_STEP1_INSTRUCTION),
         ChatMessage(role="user", content=user_text),
     ]

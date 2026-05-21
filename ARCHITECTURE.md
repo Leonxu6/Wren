@@ -247,6 +247,8 @@ cron 扫(每 ~10–15min)+ 规则预筛(零 LLM):频率预算 / 付费+等级门
 - [ ] **更新 PRD**:§14.1 #11 永久 lockout → V2。
 - [ ] PRD §15 开放决策(反差爱好 / 定价 / 首发市场等)仍待 Leon 拍板。
 - ✅ **(2026-05-20 Leon 决策)trace(全程可观测)+ 单轮 eval 接入前移到 Phase 1**:§12 Phase 1 已标;eval 集见 `eval/eval_set.md`(§1 用例 / §2 多轮种子 / §3 trace 约定);`tasks/todo.md` 新增 `p1-trace` / `p1-eval-wire`;多轮 hybrid eval 仍 Phase 2。
+- ✅ **(2026-05-20 grill · Phase 4 world/因果链 落地)**:life-sim = **纯 LLM** 写整份 `world/today.md`、**作息完全浮动不锚 §6.7**(从 canon 涌现);静态种子 `world/life_arcs.md` + 读昨天保连贯(弧线自动推进留 P6 夜结算);**懒生成按 clock 日期**(P4 不引 cron,P5 由 7am cron 调同一 `ensure_world_today`);today.md 的 `## beats` 带机读窗口 = P5 投射输入(🔒);写边界靠 `WorldStore` 独立于 `UserStore` 结构性保住;`now`(当前时刻)喂进 Step1 = 因果开关。验收例随「浮动作息」改写(`acceptance.md` Phase 4 ③:测因果差异方向、非固定时刻内容);新增多轮 `m-world-causality`。base 分支 = `p3-memory`(未合 main,Leon 日后调和)。
+- ✅ **(2026-05-21 真模型 gate 修正)**:N=3 跑 `m-world-causality` 仅 33% 暴露三因 ——(a) 全浮动「**快照式**」world(life-sim 写「now i'm…」)给注入 now **没钟点可绑**、自带 now 还打架;(b) eval「**同句一个 thread 发两次**」被「they just asked that」repeat 反应混淆。**决策3 细化为「浮动但贯穿全天」**:life-sim 把一天写成**贯穿钟点**的段落(禁单时刻快照),Step1 把 now 绑到对应段(因果仍 Step1 涌现、不加 scorer);eval 改 **fresh 上下文对**(同日一份 world、两个无共享 thread 的上下文、judge 比对,`kind: world_causality`)。+ beat 写盘前 `normalize_beats` 统一成标准 window(修真模型 `parsed_beats=0` → Phase 5 投射)。**gate:Opus 4.7 判官 N=6 → 6/6(100%)**;v4-pro 自动判官 N=5 → 80%(那 1 例系判官假阴,已用 Opus 复核确认 6/6 —— 判官噪声实锤,正式判官建议 Opus)。
 
 ---
 
