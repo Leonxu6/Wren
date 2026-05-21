@@ -133,6 +133,13 @@ def max_tokens() -> int:
     return int(os.getenv("WREN_MAX_TOKENS", "2048"))
 
 
+def settlement_max_tokens() -> int:
+    # 夜结算输出整段长 JSON(level+freeze+prose+core+unresolved)+ 强档推理模型(reasoning_tokens 占用大)。
+    # 2048 会把 JSON 截在 prose/core 之间 → parse 失败 → 全字段静默回落旧值(夜结算变 no-op,关系永不更新)。
+    # 故给足空间(每晚一次/用户,成本可忽略)。可经 env 调。
+    return int(os.getenv("WREN_SETTLEMENT_MAX_TOKENS", "8000"))
+
+
 def events_cap() -> int:
     """中期记忆注入 Step1 的事件条数上限(recency 排序 + salience 逐出)。
     seam:histories 长起来再换 token-cap / 夜间蒸馏 / 关键词召回(仍非 RAG)。"""

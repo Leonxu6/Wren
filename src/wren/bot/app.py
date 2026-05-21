@@ -12,7 +12,7 @@ from telegram.ext import (
 )
 
 from .. import config
-from .handlers import cmd_delete, cmd_help, cmd_setlevel, cmd_start, on_message
+from .handlers import cmd_delete, cmd_help, cmd_setlevel, cmd_start, cmd_tick, on_message
 from .scheduler import register_nightly
 
 
@@ -39,6 +39,7 @@ def build_application(token: str | None = None) -> Any:
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("delete", cmd_delete))
     app.add_handler(CommandHandler("setlevel", cmd_setlevel))  # 调试:手动设等级看暖度
+    app.add_handler(CommandHandler("tick", cmd_tick))  # 调试:手动触发主动消息(P5 无 live scheduler)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     app.add_error_handler(_on_error)
     register_nightly(app)  # Phase 6:每晚 ET 2:30 夜结算

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
@@ -42,3 +43,16 @@ class MockClock:
 def iso_z(dt: datetime) -> str:
     """→ '2026-05-20T06:15:00Z'(trace ts 格式)。"""
     return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def runtime_clock() -> Clock:
+    """live/debug 时钟:WREN_CLOCK_OVERRIDE=<ISO8601> → 钉死的 MockClock(P4 时段因果 / P5 时间窗手测可时间旅行),
+    否则 SystemClock(真实时间)。仅调试/测试路径用;prod 不设该 env → 走 SystemClock。"""
+    raw = os.getenv("WREN_CLOCK_OVERRIDE", "").strip()
+    if not raw:
+        return SystemClock()
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return SystemClock()
+    return MockClock(dt)

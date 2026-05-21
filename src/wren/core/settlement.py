@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .. import config
 from ..model.base import ChatModel
 from ..prompts.settlement import build_settlement_messages, parse_settlement
 from .clock import Clock, SystemClock, iso_z
@@ -53,7 +54,9 @@ def settle_nightly(
         unresolved=unresolved_before,
         recent_dialogue=store.read_recent_dialogue(),
     )
-    out = settle_model.complete(msgs, temperature=0.7, response_format="json")
+    out = settle_model.complete(
+        msgs, temperature=0.7, max_tokens=config.settlement_max_tokens(), response_format="json"
+    )
     parsed = parse_settlement(out.text)
 
     # 缺字段 / 解析失败 → 回退旧值(防一次模型抽风把关系清零)。

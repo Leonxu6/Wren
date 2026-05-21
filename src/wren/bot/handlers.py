@@ -9,11 +9,12 @@ import asyncio
 from typing import Any
 
 from .. import config
-from ..core.clock import Clock, SystemClock
+from ..core.clock import Clock, runtime_clock
 from ..core.life_sim import ensure_world_today
-from ..core.pipeline import TurnOutcome, handle_turn
+from ..core.pipeline import TurnOutcome, handle_proactive_turn, handle_turn
+from ..core.proactive import beat_fingerprint, scan_for_due_beat
 from ..core.storage import Relationship, UserStore
-from ..core.world import WorldStore
+from ..core.world import Beat, WorldStore
 from ..model.base import ChatModel
 from ..model.registry import get_model
 from ..onboarding import static_copy
@@ -38,7 +39,7 @@ async def _handle_and_send(
     s2 = s2_model or get_model("step2")
     # 全局 world(一个 Wren 一条命):懒生成今天的 life skeleton(只在缺失/过期时调模型),整篇喂 Step1。
     # 同一个 clock 喂 ensure + handle_turn,保证「她这天的哪儿」和 trace ts 一致。
-    clk = clock or SystemClock()
+    clk = clock or runtime_clock()
     world = await asyncio.to_thread(ensure_world_today, clk, WorldStore(), get_model("primary"))
     outcome = await asyncio.to_thread(
         handle_turn, str(chat_id), user_text, store, s1, s2, clock=clk, world=world
@@ -127,7 +128,72 @@ async def cmd_setlevel(update: Any, context: Any) -> None:
     await context.bot.send_message(chat_id=chat_id, text=f"[debug] relationship set to Lv{lv}")
 
 
+async def cmd_tick(update: Any, context: Any) -> None:
+    """[debug] /tick [force]:手动触发一次主动消息(Phase 5 没接 live scheduler 的测试入口)。
+
+    /tick       → 走真实零-LLM 过门(等级/窗口/预算);命中才发,否则报原因 + 今日 beats。
+    /tick force → 绕过窗口/预算,挑一条 beat 直接轻判(测主动消息生成质量)。
+    """
+    chat_id = update.effective_chat.id
+    args = getattr(context, "args", None) or []
+    force = bool(args) and str(args[0]).lower() == "force"
+    store = UserStore(str(chat_id))
+    if not store.exists():
+        store.init_user()
+    clk = runtime_clock()
+    now = clk.now()
+    world = await asyncio.to_thread(ensure_world_today, clk, WorldStore(), get_model("primary"))
+    today = WorldStore().read_today_struct()
+    beats = today.beats if today else []
+    level = store.read_relationship().level
+
+    beat: Beat | None
+    if force:
+        beat = beats[0] if beats else Beat("00:00", "23:59", "late; the studio felt pointless today")
+        reason = "force"
+    else:
+        decision = scan_for_due_beat(now, beats, level, store.read_proactive_state(), tier="premium")
+        beat, reason = decision.beat, decision.reason
+
+    if beat is None:
+        lines = [f"[tick] no proactive — {reason} (now={now:%a %H:%M}, Lv{level})", "beats today:"]
+        lines += [f"  {b.render()}" for b in beats] or ["  (none)"]
+        await context.bot.send_message(chat_id=chat_id, text="\n".join(lines))
+        return
+
+    s1 = get_model("step1")
+    s2 = get_model("step2")
+    outcome = await asyncio.to_thread(
+        handle_proactive_turn, str(chat_id), beat, store, s1, s2, clock=clk, world=world
+    )
+    store.mark_considered(now, beat_fingerprint(beat))
+    _log_turn(chat_id, f"[proactive beat] {beat.intent}", outcome)
+    if outcome.replied and outcome.bubbles:
+        store.bump_proactive_count(now)
+        await send_bubbles(
+            context.bot, chat_id, outcome.bubbles, outcome.typing_ms, outcome.bubble_gaps_ms
+        )
+    else:
+        await context.bot.send_message(
+            chat_id=chat_id, text=f"[tick] impulse passed (silent) — beat: {beat.intent[:50]}"
+        )
+
+
 # ---------- 普通消息:debounce → pipeline ----------
+
+
+# 每个 chat 一把锁:同会话多轮严格串行(她回完一条再处理下一条)。
+# 修 BUG-2:B 轮在 A 轮处理中触发时,二者并发 → 气泡交错 + B 组装 context 时缺 A 的回复 →
+# 同一问题答两遍(live 实测:「hardest part」后紧跟「u there」,答案重复且气泡乱插)。
+_chat_locks: dict[int, asyncio.Lock] = {}
+
+
+def _chat_lock(chat_id: int) -> asyncio.Lock:
+    lock = _chat_locks.get(chat_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _chat_locks[chat_id] = lock
+    return lock
 
 
 async def _flush_and_handle(chat_id: int, context: Any) -> None:
@@ -135,7 +201,9 @@ async def _flush_and_handle(chat_id: int, context: Any) -> None:
     text = " ".join(buf).strip()
     context.chat_data["buffer"] = []
     if text:
-        await _handle_and_send(chat_id, text, context.bot)
+        # 同会话串行:保证回复有序,且后一轮能看到前一轮已落盘的回复(不重复作答)。
+        async with _chat_lock(chat_id):
+            await _handle_and_send(chat_id, text, context.bot)
 
 
 async def _debounced_job(context: Any) -> None:
