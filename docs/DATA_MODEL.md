@@ -22,6 +22,7 @@
 | `unresolved_feelings.md` | 她憋着没说的(`- text`) | 夜结算 | 染色 Step1 / 供 P5 |
 | `proactive_state.md` | 主动消息预算计数器(周/日 + 当日已判 beat 指纹) | P5 过门 | P5 过门 |
 | `source.md` | 深链来源归因(首次 `/start` 写,幂等不覆盖;W3) | `/start` | 监测归因 |
+| `tier.md` | 付费档 gate-key(premium\|free,缺省 premium;非积分;W7) | 订阅 webhook(seam) | core/proactive 过门 |
 | `trace.jsonl` | 每轮一条结构化 trace(见下) | 每轮 | 复盘 / eval 回放 / 监测 ingest |
 | `settlement.jsonl` | 每晚一条夜结算 trace | 夜结算 | 监测 ingest |
 

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -141,6 +142,8 @@ def _scalar(con: duckdb.DuckDBPyConnection, sql: str) -> int:
 def ingest(*, db_path: str | Path | None = None, data_root: str | Path | None = None) -> dict[str, int]:
     """跑一遍 ETL,返回各表总行数。幂等可重复跑。"""
     root = Path(data_root) if data_root else config.data_root()
+    if not os.getenv("WREN_METRICS_SALT"):
+        print("⚠️  [metrics] WREN_METRICS_SALT 未设 → 用源码默认盐(chat_hash 可被反推);公开发布前务必设。", flush=True)
     con = connect(db_path)
     try:
         create_schema(con)
