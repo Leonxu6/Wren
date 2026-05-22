@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from telegram import BotCommand
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -21,6 +22,17 @@ async def _on_error(_update: object, context: Any) -> None:
     print(f"⚠️  handler error: {context.error!r}", flush=True)
 
 
+async def _post_init(app: Any) -> None:
+    """只把公开命令暴露到 Telegram 命令菜单;/setlevel /tick 不进菜单(且已 owner 鉴权)。"""
+    await app.bot.set_my_commands(
+        [
+            BotCommand("start", "see how you two met"),
+            BotCommand("help", "what is this"),
+            BotCommand("delete", "wipe everything (no undo)"),
+        ]
+    )
+
+
 def build_application(token: str | None = None) -> Any:
     token = token or config.telegram_token()
     if not token:
@@ -33,6 +45,7 @@ def build_application(token: str | None = None) -> Any:
         .read_timeout(20.0)
         .write_timeout(20.0)
         .pool_timeout(20.0)
+        .post_init(_post_init)
         .build()
     )
     app.add_handler(CommandHandler("start", cmd_start))

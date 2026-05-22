@@ -18,6 +18,7 @@ from ..core.world import Beat, WorldStore
 from ..model.base import ChatModel
 from ..model.registry import get_model
 from ..onboarding import static_copy
+from .limits import rate_limited, turn_blocked
 from .sender import Sleeper, send_bubbles
 
 
@@ -108,9 +109,16 @@ _DEBUG_PROSE = {
 }
 
 
+def _is_owner(chat_id: int) -> bool:
+    """调试命令仅 owner 可用(WREN_OWNER_CHAT_IDS);公开发布默认空集 = 谁都不行,防一键跳级。"""
+    return str(chat_id) in config.owner_chat_ids()
+
+
 async def cmd_setlevel(update: Any, context: Any) -> None:
-    """[debug] /setlevel <0-6>:手动设关系等级 + 对应散文(仅测试,绕过 Phase 6 夜结算)。"""
+    """[debug] /setlevel <0-6>:手动设关系等级(仅 owner;非 owner 静默,绕过 Phase 6 夜结算)。"""
     chat_id = update.effective_chat.id
+    if not _is_owner(chat_id):
+        return  # 公开发布:调试命令对非 owner 静默(不暴露其存在)
     args = getattr(context, "args", None) or []
     try:
         lv = int(args[0])
@@ -135,6 +143,8 @@ async def cmd_tick(update: Any, context: Any) -> None:
     /tick force → 绕过窗口/预算,挑一条 beat 直接轻判(测主动消息生成质量)。
     """
     chat_id = update.effective_chat.id
+    if not _is_owner(chat_id):
+        return  # 公开发布:调试命令对非 owner 静默
     args = getattr(context, "args", None) or []
     force = bool(args) and str(args[0]).lower() == "force"
     store = UserStore(str(chat_id))
@@ -201,6 +211,9 @@ async def _flush_and_handle(chat_id: int, context: Any) -> None:
     text = " ".join(buf).strip()
     context.chat_data["buffer"] = []
     if text:
+        if turn_blocked():
+            print(f"[{chat_id}] turn skipped — 今日成本天花板已达(WREN_DAILY_TURN_CAP)", flush=True)
+            return
         # 同会话串行:保证回复有序,且后一轮能看到前一轮已落盘的回复(不重复作答)。
         async with _chat_lock(chat_id):
             await _handle_and_send(chat_id, text, context.bot)
@@ -215,6 +228,8 @@ async def on_message(update: Any, context: Any) -> None:
     if not text:
         return
     chat_id = update.effective_chat.id
+    if rate_limited(chat_id):
+        return  # 防刷:超过每用户每分钟上限,静默丢弃(开放链接 abuse 护栏)
     context.chat_data.setdefault("buffer", []).append(text)
 
     name = f"debounce-{chat_id}"

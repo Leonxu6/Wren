@@ -175,3 +175,26 @@ def force_fake() -> bool:
 
 def has_api_key() -> bool:
     return bool(os.getenv("WREN_API_KEY"))
+
+
+# ---- 公开发布护栏(W1:开放链接 = 鉴权 + 防刷 + 成本天花板)----
+def owner_chat_ids() -> set[str]:
+    """调试命令(/setlevel /tick)的 owner 白名单。WREN_OWNER_CHAT_IDS="123,456"。
+    空集 = 谁都不能用 —— 公开发布默认锁死,防任何人一键跳到 Lv6 绕过「关系是挣来的」(PRD §3.3)。"""
+    raw = os.getenv("WREN_OWNER_CHAT_IDS", "")
+    return {p.strip() for p in raw.split(",") if p.strip()}
+
+
+def rate_limit_per_min() -> int:
+    """每用户每分钟最多处理的入站消息数(防刷)。0 = 不限。debounce 已合并连发,这是防持续刷屏。"""
+    return int(os.getenv("WREN_RATE_LIMIT_PER_MIN", "20"))
+
+
+def daily_turn_cap() -> int:
+    """全局每日 turn(LLM 调用)上限,成本护栏。0 = 不限(默认)。开放链接建议设值(运维 runbook)。"""
+    return int(os.getenv("WREN_DAILY_TURN_CAP", "0"))
+
+
+def daily_cap_hard() -> bool:
+    """达每日上限是否硬停(默认否:仅告警、继续服务,避免一个滥用者饿死所有正常用户)。"""
+    return os.getenv("WREN_DAILY_CAP_HARD") == "1"
