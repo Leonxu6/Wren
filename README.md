@@ -1,6 +1,6 @@
-# Wren — Phase 0 eval + Telegram walking skeleton
+# Wren — 英文 AI 关系模拟 Telegram bot(Phase 0–6 已建 · P7 部分)
 
-英文 AI 关系模拟 Telegram bot "Wren" 的第一段可运行实现:**Phase 0 单轮 eval + voice bake-off**(掐头号风险 §15#4)+ **Phase 1 walking skeleton**(Telegram ↔ think→speak ↔ per-user markdown ↔ trace)。
+英文 AI 关系模拟 Telegram bot "Wren"。**Phase 0–6 已建并合入 `main`**:P0 单轮 eval + voice bake-off(掐头号风险 §15#4)、P1 walking skeleton(Telegram ↔ think→speak ↔ per-user markdown ↔ trace)、P2 多轮回归网、P3 记忆、P4 world/life-sim(时段因果)、P5 主动消息、P6 夜间关系结算;**P7(Lv4 深夜脆弱)仅部分**(level-gate + 对/错回应分支通,无专门崩溃引擎)。设计权威仍领先代码。
 
 设计权威在仓库根:`PRD_product.md` / `ARCHITECTURE.md` / `EVAL_spec.md` / `eval/eval_set.md` / `tasks/`。
 
@@ -14,7 +14,7 @@ cp .env.example .env   # 填 key/token;留空 WREN_API_KEY → 自动 fake 模�
 ## 离线验证(无需 key/token)
 
 ```bash
-WREN_FAKE_MODEL=1 uv run pytest -q     # 67 用例:机械门/语料/judge/管线/trace/bot handler…
+WREN_FAKE_MODEL=1 uv run pytest -q     # 175 用例:机械门/语料/judge/管线/trace/bot handler/world/proactive/settlement…
 uv run ruff check . && uv run mypy src
 ```
 所有逻辑、契约、管线、写边界铁律在 fake 下端到端可验证。
