@@ -7,14 +7,24 @@ ARCHITECTURE §5 日循环的「per-user · 夜」那一格。settle_nightly 本
 from __future__ import annotations
 
 import asyncio
-from datetime import time
+from datetime import datetime, time
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from .. import config
+from ..core.clock import Clock, runtime_clock
+from ..core.life_sim import ensure_world_today
+from ..core.pipeline import handle_proactive_turn
+from ..core.proactive import beat_fingerprint, scan_for_due_beat
 from ..core.settlement import settle_nightly
 from ..core.storage import UserStore
+from ..core.trace import read_traces
+from ..core.world import WorldStore
+from ..model.base import ChatModel
 from ..model.registry import get_model
+from .handlers import _chat_lock, _log_turn  # 复用 on_message 同一把 per-chat 锁,不与之竞态
+from .limits import turn_blocked
+from .sender import send_bubbles
 
 _ET = ZoneInfo("America/New_York")
 _SETTLE_TIME = time(hour=2, minute=30, tzinfo=_ET)
@@ -59,4 +69,103 @@ def register_nightly(app: Any) -> bool:
         return False
     jq.run_daily(settle_all, time=_SETTLE_TIME, name="nightly-settlement")
     print(f"✓ 夜结算已挂:每日 {_SETTLE_TIME.strftime('%H:%M')} ET", flush=True)
+    return True
+
+
+# ---- Phase 5:主动消息 live scheduler(W2;P5 缺的就是这个触发器)----
+_PROACTIVE_INTERVAL_S = 600.0  # ~10min 扫一次
+_PROACTIVE_FIRST_S = 60.0  # 启动 1min 后首次
+_RECENCY_SKIP_S = 25 * 60.0  # 最近 25min 有过 trace 的用户:对话中,主动消息先让路(机械计时,非分类器)
+
+
+def _recently_active(store: UserStore, now: datetime, window_s: float = _RECENCY_SKIP_S) -> bool:
+    """最近一条 trace 在 window 内 → 视作对话中。纯计时护栏(§0:不是分类器)。"""
+    traces = read_traces(store.dir)
+    if not traces:
+        return False
+    try:
+        last = datetime.fromisoformat(str(traces[-1].get("ts", "")).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return (now - last).total_seconds() < window_s
+
+
+async def proactive_tick(
+    context: Any,
+    *,
+    clock: Clock | None = None,
+    s1_model: ChatModel | None = None,
+    s2_model: ChatModel | None = None,
+    world_model: ChatModel | None = None,
+) -> int:
+    """~10min 扫所有活跃用户:到点且过门的 beat → 轻判 →(发 | 压制)。返回实际发出的人数。
+
+    P5 缺的「live 触发器」。判断/渲染早建好(handle_proactive_turn);这里只管定时驱动 + 新近度护栏
+    (别在用户对话中插嘴)+ 复用同一把 per-chat 锁(气泡不交错)。models/clock 可注入(测试确定性)。
+    """
+    clk = clock or runtime_clock()
+    now = clk.now()
+    s1 = s1_model or get_model("step1")
+    s2 = s2_model or get_model("step2")
+    primary = world_model or get_model("primary")
+    await asyncio.to_thread(ensure_world_today, clk, WorldStore(), primary)
+    world = WorldStore().read_today()
+    today = WorldStore().read_today_struct()
+    beats = today.beats if today else []
+    if not beats:
+        return 0
+
+    jq = getattr(context, "job_queue", None)
+    sent = 0
+    for chat_id in active_chat_ids():
+        try:
+            cid = int(chat_id)
+        except ValueError:
+            continue  # 主动消息只发给真实数字 chat_id
+        try:
+            store = UserStore(chat_id)
+            if not store.exists():
+                continue
+            # 护栏:用户正在对话(pending debounce)/ 最近有过 trace → 让路,别插嘴
+            if jq is not None and jq.get_jobs_by_name(f"debounce-{chat_id}"):
+                continue
+            if _recently_active(store, now):
+                continue
+            level = store.read_relationship().level
+            decision = scan_for_due_beat(
+                now, beats, level, store.read_proactive_state(), tier="premium"
+            )
+            beat = decision.beat
+            if beat is None:
+                continue
+            if turn_blocked():  # 成本天花板:主动消息也计入(优先级低于反应轮)
+                break
+            async with _chat_lock(cid):  # 与 on_message 串行,气泡不交错
+                outcome = await asyncio.to_thread(
+                    handle_proactive_turn, chat_id, beat, store, s1, s2, clock=clk, world=world
+                )
+                store.mark_considered(now, beat_fingerprint(beat))
+                _log_turn(cid, f"[proactive] {beat.intent}", outcome)
+                if outcome.replied and outcome.bubbles:
+                    store.bump_proactive_count(now)
+                    await send_bubbles(
+                        context.bot, cid, outcome.bubbles, outcome.typing_ms, outcome.bubble_gaps_ms
+                    )
+                    sent += 1
+        except Exception as e:  # noqa: BLE001 — 批处理鲁棒性优先(单用户失败不拖垮整批)
+            print(f"[proactive] {chat_id} 失败:{e}", flush=True)
+            continue
+    return sent
+
+
+def register_proactive(app: Any) -> bool:
+    """把主动消息扫描挂到 JobQueue(run_repeating ~10min)。无 JobQueue 则告警跳过。"""
+    jq = getattr(app, "job_queue", None)
+    if jq is None:
+        print("⚠️  无 JobQueue —— 装 python-telegram-bot[job-queue] 才有主动消息调度。", flush=True)
+        return False
+    jq.run_repeating(
+        proactive_tick, interval=_PROACTIVE_INTERVAL_S, first=_PROACTIVE_FIRST_S, name="proactive-scan"
+    )
+    print(f"✓ 主动消息调度已挂:每 {int(_PROACTIVE_INTERVAL_S / 60)}min 扫一次", flush=True)
     return True

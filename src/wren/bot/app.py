@@ -14,7 +14,7 @@ from telegram.ext import (
 
 from .. import config
 from .handlers import cmd_delete, cmd_help, cmd_setlevel, cmd_start, cmd_tick, on_message
-from .scheduler import register_nightly
+from .scheduler import register_nightly, register_proactive
 
 
 async def _on_error(_update: object, context: Any) -> None:
@@ -56,6 +56,7 @@ def build_application(token: str | None = None) -> Any:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     app.add_error_handler(_on_error)
     register_nightly(app)  # Phase 6:每晚 ET 2:30 夜结算
+    register_proactive(app)  # Phase 5:每 ~10min 主动消息扫描(W2 — P5 缺的 live 触发器)
     return app
 
 
