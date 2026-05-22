@@ -18,6 +18,8 @@ env/
 world/today.md
 world/yesterday.md
 data/users/
+data/*.duckdb
+data/*.duckdb.wal
 
 # ===== 测试 / lint 缓存 =====
 .pytest_cache/
