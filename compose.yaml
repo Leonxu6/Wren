@@ -1,0 +1,21 @@
+# Wren 单实例部署(W5)。bot(对话 + 夜结算 + 主动调度)+ metrics(监测灌库循环)。
+# 数据挂卷 = 关系命脉,务必备份(scripts/backup.sh + cron)。⚠️ 单实例:勿对 bot 做 scale > 1。
+services:
+  bot:
+    build: .
+    restart: always
+    env_file: .env
+    volumes:
+      - ./data:/app/data # per-user 关系状态 + trace(命脉)
+      - ./world:/app/world # 共享 life skeleton(today.md 运行期 + life_arcs.md 种子)
+    stop_grace_period: 30s
+
+  metrics:
+    build: .
+    restart: always
+    env_file: .env
+    volumes:
+      - ./data:/app/data # 只读消费 trace → 写 data/metrics.duckdb
+      - ./world:/app/world
+    # 跑在 bot 进程外(故障隔离);每 ~15min 增量幂等灌库。
+    command: ["sh", "-c", "while true; do uv run wren-metrics ingest || true; sleep 900; done"]
