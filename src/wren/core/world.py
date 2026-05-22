@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import config
+from .atomicio import atomic_write_text
 
 # `- [window: 01:00–02:00] intent…` 或 `- [01:00–02:00] intent…`(window: 前缀可选 + – — - 三种破折号)。
 # 宽松解析(同 jsonio 哲学):真实便宜模型 temp 0.9 常丢 `window:`,parser 不能只认严格式,
@@ -102,11 +103,9 @@ class WorldStore:
 
     # ---- 写(唯一能写 world/ 的地方)----
     def write_today(self, content: str) -> None:
-        self.root.mkdir(parents=True, exist_ok=True)
-        self._today.write_text(content.rstrip() + "\n", encoding="utf-8")
+        atomic_write_text(self._today, content.rstrip() + "\n")
 
     def rotate_to_yesterday(self) -> None:
         """重生成前把旧 today 落成 yesterday(跨天连贯的输入)。无旧档则无操作。"""
         if self._today.exists():
-            self.root.mkdir(parents=True, exist_ok=True)
-            self._yesterday.write_text(self._today.read_text(encoding="utf-8"), encoding="utf-8")
+            atomic_write_text(self._yesterday, self._today.read_text(encoding="utf-8"))

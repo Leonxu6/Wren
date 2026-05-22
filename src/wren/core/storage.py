@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .. import config
+from .atomicio import atomic_write_text
 
 _CHAT_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 # events.md 行:- [topic|valence|salience] text
@@ -151,11 +152,11 @@ class UserStore:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.write_relationship(Relationship(level=0, prose=_INITIAL_PROSE, freeze=False))
         self.write_inner_voice(_INITIAL_INNER_VOICE)
-        self._impressions.write_text(_STUB_IMPRESSIONS, encoding="utf-8")
-        self._events.write_text(_STUB_EVENTS, encoding="utf-8")
-        self._core_impression.write_text(_STUB_CORE, encoding="utf-8")
-        self._unresolved.write_text(_STUB_UNRESOLVED, encoding="utf-8")
-        self._conversation.write_text("", encoding="utf-8")
+        atomic_write_text(self._impressions, _STUB_IMPRESSIONS)
+        atomic_write_text(self._events, _STUB_EVENTS)
+        atomic_write_text(self._core_impression, _STUB_CORE)
+        atomic_write_text(self._unresolved, _STUB_UNRESOLVED)
+        atomic_write_text(self._conversation, "")
 
     def delete(self) -> None:
         """/delete:清整个用户目录(含 trace.jsonl)。"""
@@ -185,12 +186,12 @@ class UserStore:
 
     def write_relationship(self, r: Relationship) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
-        self._relationship.write_text(
+        atomic_write_text(
+            self._relationship,
             f"# Relationship State (离散 level = gate-key;非积分)\n\n"
             f"level: {r.level}\n"
             f"freeze: {str(r.freeze).lower()}\n\n"
             f"## prose\n\n{r.prose}\n",
-            encoding="utf-8",
         )
 
     # ---- inner_voice ----
@@ -199,7 +200,7 @@ class UserStore:
 
     def write_inner_voice(self, text: str) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
-        self._inner_voice.write_text(text.strip() + "\n", encoding="utf-8")
+        atomic_write_text(self._inner_voice, text.strip() + "\n")
 
     # ---- impressions(Step1 产出,夜结算消费)----
     @staticmethod
@@ -224,7 +225,7 @@ class UserStore:
 
     def clear_impressions(self) -> None:
         """夜结算后清空(留表头),为下一日重新累积。"""
-        self._impressions.write_text(_STUB_IMPRESSIONS, encoding="utf-8")
+        atomic_write_text(self._impressions, _STUB_IMPRESSIONS)
 
     # ---- core_impression(夜结算蒸馏的长期核心印象;永久注入 Step1,只被结算重写)----
     def read_core_impression(self) -> str:
@@ -240,9 +241,7 @@ class UserStore:
     def write_core_impression(self, text: str) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
         body = text.strip()
-        self._core_impression.write_text(
-            _STUB_CORE + (f"\n{body}\n" if body else ""), encoding="utf-8"
-        )
+        atomic_write_text(self._core_impression, _STUB_CORE + (f"\n{body}\n" if body else ""))
 
     # ---- unresolved_feelings(她憋着没说的;夜结算更新;染色 Step1 / 供 P5)----
     def read_unresolved(self) -> list[str]:
@@ -251,7 +250,7 @@ class UserStore:
     def write_unresolved(self, items: list[str]) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
         body = "".join(f"- {it.strip()}\n" for it in items if it.strip())
-        self._unresolved.write_text(_STUB_UNRESOLVED + body, encoding="utf-8")
+        atomic_write_text(self._unresolved, _STUB_UNRESOLVED + body)
 
     # ---- events(中期记忆;Step1 涌现写入 + 注入 Step1 召回;只进 Step1,反污染)----
     @staticmethod
@@ -342,7 +341,7 @@ class UserStore:
             f"day_count: {s.day_count}",
             *(f"considered: {fp}" for fp in s.considered_today),
         ]
-        self._proactive_state.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        atomic_write_text(self._proactive_state, "\n".join(lines) + "\n")
 
     def bump_proactive_count(self, now: datetime) -> None:
         """实际发出一条主动消息后调用(跨周/日先重置再 +1)。压制(reply=False)【不】调用。"""

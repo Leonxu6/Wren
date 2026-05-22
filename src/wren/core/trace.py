@@ -56,11 +56,24 @@ def write_trace(store_dir: Path, trace: TurnTrace) -> Path:
     return path
 
 
-def read_traces(store_dir: Path) -> list[dict[str, Any]]:
-    path = trace_path(store_dir)
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    """读 JSONL,跳过空行与坏行(掉电极端下尾行可能不全;不让一行坏掉整份读取)。"""
     if not path.exists():
         return []
-    return [json.loads(ln) for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    out: list[dict[str, Any]] = []
+    for ln in path.read_text(encoding="utf-8").splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            out.append(json.loads(ln))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def read_traces(store_dir: Path) -> list[dict[str, Any]]:
+    return _read_jsonl(trace_path(store_dir))
 
 
 def count_traces(store_dir: Path) -> int:
@@ -76,10 +89,7 @@ def write_settlement_trace(store_dir: Path, trace: SettlementTrace) -> Path:
 
 
 def read_settlements(store_dir: Path) -> list[dict[str, Any]]:
-    path = settlement_path(store_dir)
-    if not path.exists():
-        return []
-    return [json.loads(ln) for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    return _read_jsonl(settlement_path(store_dir))
 
 
 def count_settlements(store_dir: Path) -> int:

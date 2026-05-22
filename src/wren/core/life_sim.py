@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import threading
+
 from .. import config
 from ..model.base import ChatModel
 from ..prompts.life_sim import assemble_today, build_life_sim_messages
@@ -37,12 +39,24 @@ def run_life_sim(clock: Clock, world_store: WorldStore, model: ChatModel) -> str
     return content
 
 
+# 全局单飞锁:world/ 是「一个 Wren 一条命」的共享一份,多用户的轮可能并发触发重生成。
+# 双检锁保证同一天只生成一次(省掉重复 LLM call + 防并发 rotate/写竞态)。单进程内有效(部署单实例 D3.5)。
+_world_lock = threading.Lock()
+
+
 def ensure_world_today(clock: Clock, world_store: WorldStore, model: ChatModel) -> str:
-    """懒触发:today.md 是今天的 → 原样返回(零调用);否则旧档转 yesterday 再重生成。"""
+    """懒触发:today.md 是今天的 → 原样返回(零调用);否则旧档转 yesterday 再重生成。
+
+    共享 world/ 下多用户并发安全:双检锁 —— 拿锁后再查一次,别的线程刚生成好就直接用。
+    """
     date = f"{clock.now():%Y-%m-%d}"
     cur = world_store.read_today_struct()
     if cur is not None and cur.date == date:
-        return cur.raw  # 同日幂等,不调用模型
-    if cur is not None:
-        world_store.rotate_to_yesterday()  # 跨天:旧 today → yesterday(连贯输入)
-    return run_life_sim(clock, world_store, model)
+        return cur.raw  # 同日幂等,不调用模型(无锁快路径)
+    with _world_lock:
+        cur = world_store.read_today_struct()  # 双检:可能别的线程已生成
+        if cur is not None and cur.date == date:
+            return cur.raw
+        if cur is not None:
+            world_store.rotate_to_yesterday()  # 跨天:旧 today → yesterday(连贯输入)
+        return run_life_sim(clock, world_store, model)
