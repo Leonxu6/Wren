@@ -16,6 +16,7 @@ wren-multiturn = "wren.eval.multiturn:main"
 wren-aliveness = "wren.eval.aliveness:main"
 wren-bot = "wren.bot.app:main"
 wren-nightly = "wren.bot.nightly:main"
+wren-metrics = "wren.ops.cli:main"  # W6 监测库 CLI(只读消费 data/,跑在 bot 进程外)
 
 [dependency-groups]
 dev = [
@@ -24,6 +25,7 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
     "types-PyYAML>=6",
+    "duckdb>=1.1",  # W6 监测库(ops/);仅 wren-metrics 用,不进 bot 运行期热路径
 ]
 
 [build-system]
@@ -50,7 +52,7 @@ strict = true
 warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
-module = ["telegram.*", "apscheduler.*"]
+module = ["telegram.*", "apscheduler.*", "duckdb.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
