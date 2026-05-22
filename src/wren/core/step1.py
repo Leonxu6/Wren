@@ -9,8 +9,10 @@ from dataclasses import dataclass
 
 from .. import config
 from ..model.base import ChatModel
+from ..prompts.proactive import build_proactive_step1_messages
 from ..prompts.step1 import build_step1_messages, parse_step1
 from .context import TurnContext
+from .world import Beat
 
 
 @dataclass
@@ -34,6 +36,42 @@ def run_step1(ctx: TurnContext, model: ChatModel) -> Step1Result:
         events=ctx.events,
         recent_dialogue=ctx.recent_dialogue,
         user_text=ctx.user_text,
+        world=ctx.world,
+        now=ctx.now,
+        core_impression=ctx.core_impression,
+        unresolved=ctx.unresolved,
+    )
+    out = model.complete(
+        msgs, temperature=0.8, response_format="json", max_tokens=config.max_tokens()
+    )
+    d = parse_step1(out.text)
+    return Step1Result(
+        monologue=d["monologue"],
+        reply=d["reply"],
+        delay_s=d["delay_s"],
+        impression=d["impression"],
+        selected_memory=d["memory"],
+        event_to_store=d["event"],
+        raw=out.text,
+        model=out.model,
+        tokens=out.completion_tokens,
+        latency_ms=out.latency_ms,
+    )
+
+
+def run_step1_proactive(ctx: TurnContext, beat: Beat, model: ChatModel) -> Step1Result:
+    """到点轻判:Step1 同形主动调用(无 user_text,beat 当冲动喂进去)。reply=False = 压制(冲动过去)。
+
+    复用 Step1Result 契约 + parse_step1 —— 只换 build_proactive_step1_messages(主动框架)。
+    """
+    msgs = build_proactive_step1_messages(
+        beat_intent=beat.intent,
+        relationship_prose=ctx.relationship.prose,
+        inner_voice=ctx.inner_voice,
+        events=ctx.events,
+        recent_dialogue=ctx.recent_dialogue,
+        world=ctx.world,
+        now=ctx.now,
     )
     out = model.complete(
         msgs, temperature=0.8, response_format="json", max_tokens=config.max_tokens()
