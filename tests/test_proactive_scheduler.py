@@ -88,6 +88,14 @@ async def test_proactive_tick_skips_lv0(data_root: Path, world_root: Path) -> No
     assert n == 0
 
 
+async def test_proactive_tick_skips_free_tier(data_root: Path, world_root: Path) -> None:
+    _seed_world(world_root)
+    store = _lv3_user()
+    store.write_tier("free")  # 免费档:无主动消息(订阅 seam 短路成 0)
+    n = await proactive_tick(_ctx(), clock=MockClock(_NOW), **_models())
+    assert n == 0
+
+
 def test_recently_active(data_root: Path) -> None:
     store = UserStore("u")
     store.init_user()

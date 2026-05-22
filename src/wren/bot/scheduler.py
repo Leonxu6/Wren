@@ -133,7 +133,7 @@ async def proactive_tick(
                 continue
             level = store.read_relationship().level
             decision = scan_for_due_beat(
-                now, beats, level, store.read_proactive_state(), tier="premium"
+                now, beats, level, store.read_proactive_state(), tier=store.read_tier()
             )
             beat = decision.beat
             if beat is None:

@@ -147,6 +147,10 @@ class UserStore:
     def _source(self) -> Path:
         return self.dir / "source.md"
 
+    @property
+    def _tier(self) -> Path:
+        return self.dir / "tier.md"
+
     # ---- 生命周期 ----
     def exists(self) -> bool:
         return self._relationship.exists()
@@ -272,6 +276,23 @@ class UserStore:
             return
         self.dir.mkdir(parents=True, exist_ok=True)
         atomic_write_text(self._source, f"# Source (深链来源归因 · 首触写一次)\n{source}\n")
+
+    # ---- tier(付费档 gate-key,非积分;订阅 seam 的读写点。free 在 core/proactive 短路成 0)----
+    def read_tier(self) -> str:
+        """premium | free。缺省 premium(v1 全员免费开放,付费门是 seam)。只认这两个值。"""
+        if not self._tier.exists():
+            return "premium"
+        for ln in self._tier.read_text(encoding="utf-8").splitlines():
+            ln = ln.strip()
+            if ln and not ln.startswith("#"):
+                return ln if ln in ("premium", "free") else "premium"
+        return "premium"
+
+    def write_tier(self, tier: str) -> None:
+        """设付费档 —— 日后加订阅:支付 webhook 调这里(premium/free),不动 core/。"""
+        t = tier if tier in ("premium", "free") else "premium"
+        self.dir.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(self._tier, f"# Tier (付费档 gate-key · 非积分 · 订阅 webhook 写这里)\n{t}\n")
 
     # ---- events(中期记忆;Step1 涌现写入 + 注入 Step1 召回;只进 Step1,反污染)----
     @staticmethod

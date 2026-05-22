@@ -175,7 +175,9 @@ async def cmd_tick(update: Any, context: Any) -> None:
         beat = beats[0] if beats else Beat("00:00", "23:59", "late; the studio felt pointless today")
         reason = "force"
     else:
-        decision = scan_for_due_beat(now, beats, level, store.read_proactive_state(), tier="premium")
+        decision = scan_for_due_beat(
+            now, beats, level, store.read_proactive_state(), tier=store.read_tier()
+        )
         beat, reason = decision.beat, decision.reason
 
     if beat is None:
