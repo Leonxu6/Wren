@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 
 from .. import config
@@ -73,12 +74,24 @@ def _log_turn(chat_id: int, user_text: str, outcome: TurnOutcome) -> None:
 
 # ---------- 命令 ----------
 
+_SOURCE_RE = re.compile(r"[^A-Za-z0-9_-]")
+
+
+def _deeplink_source(context: Any) -> str:
+    """深链 t.me/<bot>?start=<payload> 的来源归因:取 context.args[0],净化(仅 alnum/_/-)、限长 64。
+    非 list(如测试 mock)/无 payload → 空串。无门,仅归因。"""
+    args = getattr(context, "args", None)
+    if not isinstance(args, (list, tuple)) or not args:
+        return ""
+    return _SOURCE_RE.sub("", str(args[0]))[:64]
+
 
 async def cmd_start(update: Any, context: Any) -> None:
     chat_id = update.effective_chat.id
     store = UserStore(str(chat_id))
     if not store.exists():
         store.init_user()  # Lv0 + 种 t=0 inner_voice
+    store.write_source_once(_deeplink_source(context))  # 深链 ?start=<来源> 归因(首触一次,不调模型)
     # 静态文案 + 她的沉默 —— 绝不调用任何模型
     await context.bot.send_message(chat_id=chat_id, text=static_copy.AGE_AI_NOTICE)
     await context.bot.send_message(chat_id=chat_id, text=static_copy.ONBOARDING_BACKGROUND)

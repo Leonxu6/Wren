@@ -143,6 +143,10 @@ class UserStore:
     def _unresolved(self) -> Path:
         return self.dir / "unresolved_feelings.md"
 
+    @property
+    def _source(self) -> Path:
+        return self.dir / "source.md"
+
     # ---- 生命周期 ----
     def exists(self) -> bool:
         return self._relationship.exists()
@@ -251,6 +255,23 @@ class UserStore:
         self.dir.mkdir(parents=True, exist_ok=True)
         body = "".join(f"- {it.strip()}\n" for it in items if it.strip())
         atomic_write_text(self._unresolved, _STUB_UNRESOLVED + body)
+
+    # ---- source(深链来源归因 W3;首触写一次,供监测归因。无门,仅记录)----
+    def read_source(self) -> str:
+        if not self._source.exists():
+            return ""
+        for ln in self._source.read_text(encoding="utf-8").splitlines():
+            ln = ln.strip()
+            if ln and not ln.startswith("#"):
+                return ln
+        return ""
+
+    def write_source_once(self, source: str) -> None:
+        """首次 /start 记深链来源(?start=<payload>);已有则不覆盖(幂等,保住首触来源)。"""
+        if not source or self._source.exists():
+            return
+        self.dir.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(self._source, f"# Source (深链来源归因 · 首触写一次)\n{source}\n")
 
     # ---- events(中期记忆;Step1 涌现写入 + 注入 Step1 召回;只进 Step1,反污染)----
     @staticmethod
