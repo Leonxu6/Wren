@@ -267,6 +267,30 @@ ssh -p 62769 root@104.233.146.220 'bash /srv/wren/scripts/restore.sh /srv/wren-b
 ### 🔥 token 冲突 `Conflict: terminated by other getUpdates`
 说明别的进程在用同 token long-poll：要么 kill 那个进程，要么 BotFather `/revoke` 重发 + 更新 `.env`。
 
+### 🔥 dashboard 打不开 `localhost:8002 拒绝连接`（**最高频**）
+**99% 是 SSH 隧道断了**（开机重启 / 锁屏久了 / 你之前手动 `pkill` 过）。1 分钟内修：
+
+```bash
+# 1. 确认 VPS 端 viewer 还在跑
+ssh -p 62769 root@104.233.146.220 'cd /srv/wren && docker compose ps viewer'
+# 应看到 Up X hours
+
+# 2. 重新起本机 SSH 隧道(后台 -fN,跑一次即可)
+ssh -fN -L 8002:127.0.0.1:8002 -p 62769 root@104.233.146.220
+
+# 3. 验证
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8002/   # 应 200
+open http://localhost:8002
+
+# 4. 看进程
+ps aux | grep 'ssh -fN -L 8002' | grep -v grep
+```
+
+**判断是哪边断**：
+- `curl localhost:8002` 失败 = **本机隧道断**（重起就行，按上面 4 步）
+- VPS 上 `docker compose ps viewer` 显示 exited / restarting = **viewer 容器挂了**（`docker compose up -d viewer`）
+- VPS 上 `ss -tlnp | grep 8002` 没结果 = **viewer 进程没 listen**（看 logs：`docker compose logs viewer`）
+
 ### 🔥 公网到 telegram.org / api.deepseek.com 不通
 RAKsmart 节点（美西硅谷）平时都通。如果某天显示 down：
 - dashboard `/` 首页「出网」卡看 3 个 endpoint 状态
