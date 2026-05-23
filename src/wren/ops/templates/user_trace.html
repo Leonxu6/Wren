@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% block title %}{{ chat_id }} · Wren ops{% endblock %}
+{% block crumb %}<a href="/users" style="color:#3b82f6;text-decoration:none;">← 用户</a> · <b class="mono">{{ chat_id }}</b> · {{ turn_count }} turns · {{ settle_count }} settlements{% endblock %}
+{% block content %}
+
+<div class="user-page">
+  <!-- ====== 左 30%:用户元数据 ====== -->
+  <aside class="user-side">
+    <div class="card">
+      <div class="card-title">用户档案</div>
+      <div class="user-id">{{ chat_id }}</div>
+      <div class="user-hash mono">hash {{ chat_hash }}</div>
+      <div class="badges">
+        {% set lv_match = rel %}
+        {% set lv_show = -1 %}
+        {% set freeze_show = false %}
+        {% if rel %}
+          {% for ln in rel.splitlines()[:30] %}
+            {% set s = ln.strip().lower() %}
+            {% if (s.startswith('level') or s.startswith('lv')) and ':' in s %}
+              {% set parts = s.split(':', 1) %}
+              {% if parts[1].strip().split() %}
+                {% set lv_show = parts[1].strip().split()[0]|int(-1) %}
+              {% endif %}
+            {% endif %}
+            {% if s.startswith('freeze') and ':' in s %}
+              {% set v = s.split(':', 1)[1].strip() %}
+              {% if v.startswith('true') or v.startswith('yes') %}{% set freeze_show = true %}{% endif %}
+            {% endif %}
+          {% endfor %}
+        {% endif %}
+        <span class="lv lv{{ lv_show if lv_show >= 0 else 'unknown' }}">{% if lv_show >= 0 %}Lv{{ lv_show }}{% else %}Lv?{% endif %}</span>
+        {% if freeze_show %}
+          <span class="badge bad">❄ frozen</span>
+        {% else %}
+          <span class="badge ok">● active</span>
+        {% endif %}
+        {% if source %}<span class="badge neutral">{{ source }}</span>{% endif %}
+      </div>
+      <div class="meta-row mono">{{ turn_count }} turns · {{ settle_count }} settlements</div>
+    </div>
+
+    {% if rel %}
+    <div class="card">
+      <div class="card-title">当前 relationship_state.md</div>
+      <div class="prose-block">{{ rel }}</div>
+    </div>
+    {% endif %}
+
+    {% if core %}
+    <div class="card">
+      <details><summary>core_impression.md(长期蒸馏)</summary>
+        <pre class="md">{{ core }}</pre>
+      </details>
+    </div>
+    {% endif %}
+
+    {% if events %}
+    <div class="card">
+      <details><summary>events.md(中期记忆)</summary>
+        <pre class="md">{{ events }}</pre>
+      </details>
+    </div>
+    {% endif %}
+  </aside>
+
+  <!-- ====== 右 70%:聊天泡泡时间线 + 夜结算 ====== -->
+  <section class="user-main">
+    <h2 class="section-title" style="margin-top:0">完整 trace 时间线 <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">最新在上 · 点 wren 气泡展开看内心</span></h2>
+
+    {% if items %}
+    <div class="timeline">
+      {% for it in items %}
+        {% if it.kind == 'turn' %}
+          {% set t = it.data %}
+          {% set s1 = t.step1 or {} %}
+          {% set lv = (t.relationship or {}).get('lv') %}
+          {% set kind = t.kind or 'reactive' %}
+          {% set is_silent = t.step2 is none %}
+          {% set bubbles = (t.sent or {}).get('bubbles') or (t.step2 or {}).get('bubbles') or [] %}
+
+          {% if t.user_turn %}
+          <!-- user 气泡 -->
+          <div class="bubble-row user">
+            <div class="bubble-stack">
+              <span class="ts">{{ t.ts }} · Lv{{ lv }}{% if kind == 'proactive' %} · 主动{% endif %}</span>
+              <div class="bubble">{{ t.user_turn }}</div>
+            </div>
+          </div>
+          {% endif %}
+
+          <!-- wren 气泡(可能 silent) -->
+          <div class="bubble-row wren" id="turn-{{ loop.index }}">
+            <div class="bubble-stack">
+              {% if is_silent %}
+                <span class="ts">{{ t.ts }} · — 沉默 · delay {{ s1.get('delay_s') or '?' }}s</span>
+                <div class="bubble silent">— 沉默(left on read)</div>
+              {% else %}
+                <span class="ts">{{ t.ts }} · {{ s1.get('delay_s') or '?' }}s · {{ s1.get('latency_ms') or '?' }}ms</span>
+                {% for b in bubbles %}
+                <div class="bubble">{{ b }}</div>
+                {% endfor %}
+              {% endif %}
+              <button class="detail-toggle" onclick="toggleDetail('turn-{{ loop.index }}')">▼ 展开看内心 · impression · 元数据</button>
+            </div>
+            <div class="bubble-detail">
+              {% if s1.get('inner_voice_after') %}
+              <div class="field">
+                <div class="field-label">step1.inner_voice_after · 她的内心独白</div>
+                <pre>{{ s1.inner_voice_after }}</pre>
+              </div>
+              {% endif %}
+              {% if s1.get('impression') %}
+              <div class="field">
+                <div class="field-label">step1.impression · 这轮新增的印象</div>
+                <pre>{{ s1.impression }}</pre>
+              </div>
+              {% endif %}
+              {% if s1.get('event_stored') %}
+              <div class="field">
+                <div class="field-label">step1.event_stored · 写进中期记忆 📝</div>
+                <pre class="memory">{{ s1.event_stored }}</pre>
+              </div>
+              {% endif %}
+              {% if not is_silent and bubbles %}
+              <div class="field">
+                <div class="field-label">step2.bubbles · 发送给 Telegram 的气泡</div>
+                {% for b in bubbles %}<div style="background:#dbeafe;padding:6px 12px;border-radius:12px;margin:4px 0;display:inline-block;max-width:80%;">{{ b }}</div>{% endfor %}
+              </div>
+              {% endif %}
+              <div class="meta-line">
+                <span>kind={{ kind }}</span>
+                <span>delay_s={{ s1.get('delay_s') or '?' }}</span>
+                <span>tokens={{ s1.get('tokens') or '?' }}</span>
+                <span>latency_ms={{ s1.get('latency_ms') or '?' }}</span>
+                <span>model={{ s1.get('model') or '?' }}</span>
+              </div>
+            </div>
+          </div>
+
+        {% else %}
+          {% set s = it.data %}
+          {% set b = s.before or {} %}
+          {% set a = s.after or {} %}
+          {% set j = s.judge or {} %}
+          <div class="settle-card" id="settle-{{ loop.index }}">
+            <div class="settle-head" onclick="toggleSettle('settle-{{ loop.index }}')">
+              <span class="moon">🌙</span>
+              <span style="font-size:12px;color:#9ca3af;font-family:ui-monospace,Menlo,monospace">{{ s.ts }}</span>
+              <span>夜结算</span>
+              <span class="lv-trans">Lv {{ b.get('lv') }} → {{ a.get('lv') }}</span>
+              <span class="muted" style="font-size:12px">freeze {{ b.get('freeze') }} → {{ a.get('freeze') }}</span>
+              <span style="margin-left:auto;color:#a78bfa;font-size:12px">▼ 点开看 prose 重写</span>
+            </div>
+            <div class="settle-body">
+              {% if j.get('raw_out') %}
+              <div class="field">
+                <div class="field-label" style="color:#7c3aed;font-weight:600;margin-bottom:8px;">judge.raw_out · 完整重写(level + prose + core + unresolved)</div>
+                <div class="prose-pretty">{{ j.raw_out | tojson_pretty }}</div>
+              </div>
+              {% endif %}
+              {% if s.impressions %}
+              <div class="field" style="margin-top:12px;">
+                <div class="field-label" style="color:#7c3aed;font-weight:600;">本次消费的 impressions({{ s.impressions|length }} 条)</div>
+                <div class="imp-list">
+                  {% for imp in s.impressions %}<span class="imp-chip">{{ imp }}</span>{% endfor %}
+                </div>
+              </div>
+              {% endif %}
+              <div class="meta-line" style="margin-top:12px;">
+                <span>model={{ j.get('model') or '?' }}</span>
+                <span>tokens={{ j.get('tokens') or '?' }}</span>
+                <span>latency_ms={{ j.get('latency_ms') or '?' }}</span>
+                <span>parse_ok={{ j.get('parse_ok') }}</span>
+              </div>
+            </div>
+          </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty">该用户暂无 trace 或 settlement。</div>
+    {% endif %}
+  </section>
+</div>
+
+{% block scripts %}
+<script>
+function toggleDetail(id) {
+  document.getElementById(id).classList.toggle('expanded');
+}
+function toggleSettle(id) {
+  document.getElementById(id).classList.toggle('expanded');
+}
+// 默认展开第一个 wren 气泡 + 第一个 settlement(让 V1/V2 验收一打开就能看到)
+window.addEventListener('DOMContentLoaded', () => {
+  const firstWren = document.querySelector('.bubble-row.wren');
+  if (firstWren) firstWren.classList.add('expanded');
+  const firstSettle = document.querySelector('.settle-card');
+  if (firstSettle) firstSettle.classList.add('expanded');
+});
+</script>
+{% endblock %}
+{% endblock %}

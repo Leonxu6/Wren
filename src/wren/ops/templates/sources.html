@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}来源 · Wren ops{% endblock %}
+{% block crumb %}<b>来源</b> · ?start=&lt;campaign&gt; 归因 funnel{% endblock %}
+{% block content %}
+
+<h1 class="page-title">来源归因</h1>
+<div class="page-sub">哪些渠道带来的用户最多 · 激活率(发首条)和留存(D1/D7)分别多少</div>
+
+<div class="charts-grid" style="grid-template-columns: 1.5fr 1fr;">
+  <div class="card chart-card">
+    <div class="card-title">各来源用户数 <span class="sub">acquisition</span></div>
+    <div class="echart" id="chart-acq" style="height:300px"></div>
+  </div>
+  <div class="card chart-card">
+    <div class="card-title">激活率 <span class="sub">发首条消息占比</span></div>
+    <div class="echart" id="chart-act" style="height:300px"></div>
+  </div>
+</div>
+
+<h2 class="section-title">留存(D1 / D7 cohort)</h2>
+{% if retention %}
+<table class="data">
+  <thead><tr><th>source</th><th>cohort 人数</th><th>D1 回访</th><th>D7 回访</th><th>D1 留存率</th><th>D7 留存率</th></tr></thead>
+  <tbody>
+  {% for r in retention %}
+  <tr>
+    <td><b>{{ r.source }}</b></td>
+    <td class="mono">{{ r.cohort_n }}</td>
+    <td class="mono">{{ r.d1 or 0 }}</td>
+    <td class="mono">{{ r.d7 or 0 }}</td>
+    <td class="mono">{{ ((r.d1 or 0) * 100 / r.cohort_n) | round(1) if r.cohort_n else 0 }}%</td>
+    <td class="mono">{{ ((r.d7 or 0) * 100 / r.cohort_n) | round(1) if r.cohort_n else 0 }}%</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">还无留存数据(需要 ≥ D1)</div>
+{% endif %}
+
+{% block scripts %}
+<script>
+window.__dash = {
+  sources: {{ sources | tojson }},
+  activation: {{ activation | tojson }},
+};
+(function() {
+  const sr = window.__dash.sources || [];
+  const elA = document.getElementById('chart-acq');
+  if (sr.length) {
+    const c = echarts.init(elA);
+    c.setOption({
+      tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
+      grid: { left: 90, right: 30, top: 16, bottom: 16 },
+      xAxis: { type: "value" }, yAxis: { type: "category", data: sr.map(r => r.source) },
+      series: [{ type: "bar", data: sr.map(r => r.new_users), itemStyle: { color: "#7c3aed", borderRadius: [0,4,4,0] }, label: { show: true, position: "right" } }],
+    });
+  } else { elA.innerHTML = '<div style="display:flex;height:100%;align-items:center;justify-content:center;color:#9ca3af">无来源记录</div>'; }
+
+  const ac = window.__dash.activation || [];
+  const elAct = document.getElementById('chart-act');
+  if (ac.length) {
+    const c = echarts.init(elAct);
+    c.setOption({
+      tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
+      grid: { left: 60, right: 16, top: 16, bottom: 36 },
+      xAxis: { type: "category", data: ac.map(r => r.source), axisLabel: { fontSize: 11 } },
+      yAxis: { type: "value", axisLabel: { formatter: "{value}%" } },
+      series: [{ type: "bar", data: ac.map(r => r.activation_pct||0), itemStyle: { color: "#10b981", borderRadius: [4,4,0,0] }, label: { show: true, position: "top", formatter: "{c}%" } }],
+    });
+  } else { elAct.innerHTML = '<div style="display:flex;height:100%;align-items:center;justify-content:center;color:#9ca3af">无激活记录</div>'; }
+})();
+</script>
+{% endblock %}
+{% endblock %}

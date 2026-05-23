@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}成本 · Wren ops{% endblock %}
+{% block crumb %}<b>成本</b> · 30d 历史 + DAILY_CAP{% endblock %}
+{% block content %}
+
+<h1 class="page-title">成本</h1>
+<div class="page-sub">每日 turn 数 + tokens · 离 DAILY_CAP 多远 · 按 model 拆分</div>
+
+<div class="kpi-row" style="grid-template-columns: repeat(3, 1fr);">
+  <div class="kpi-card">
+    <div class="label">今日 cost</div>
+    <div class="value">${{ today.cost_usd or 0 }}<span class="unit">USD</span></div>
+  </div>
+  <div class="kpi-card">
+    <div class="label">DAILY_CAP</div>
+    {% if daily_cap.cap > 0 %}
+      <div class="value">{{ daily_cap.used }}<span class="unit">/ {{ daily_cap.cap }}</span></div>
+      <div class="sub-value">{{ daily_cap.pct }}% 已用</div>
+      <div class="progress"><div class="fill" style="width: {{ [daily_cap.pct or 0, 100]|min }}%"></div></div>
+    {% else %}
+      <div class="value muted">unlimited</div>
+      <div class="sub-value warn">⚠ 公开发布建议设个上限</div>
+    {% endif %}
+  </div>
+  <div class="kpi-card">
+    <div class="label">今日 turn 数</div>
+    <div class="value">{{ today.user_msgs or 0 }}</div>
+  </div>
+</div>
+
+<div class="card chart-card" style="margin-top:16px;">
+  <div class="card-title">30 天 turn 数 + tokens</div>
+  <div class="echart" id="chart-cost30" style="height:340px"></div>
+</div>
+
+{% block scripts %}
+<script>
+window.__dash = {
+  cost_history: {{ cost_history | tojson }},
+  daily_cap: {{ daily_cap | tojson }},
+};
+(function() {
+  const rows = window.__dash.cost_history || [];
+  const cap = (window.__dash.daily_cap || {}).cap || 0;
+  const el = document.getElementById('chart-cost30');
+  if (!rows.length) { el.innerHTML = '<div style="display:flex;height:100%;align-items:center;justify-content:center;color:#9ca3af">无 cost 记录</div>'; return; }
+  const c = echarts.init(el);
+  const series = [
+    { name:"turns", type:"bar", data: rows.map(r => r.turns||0), itemStyle:{color:"#f59e0b", borderRadius:[4,4,0,0]}, yAxisIndex: 0 },
+    { name:"completion tokens", type:"line", data: rows.map(r => r.completion_tokens||0), itemStyle:{color:"#3b82f6"}, yAxisIndex: 1, smooth: true },
+  ];
+  if (cap > 0) {
+    series.push({ name:"DAILY_CAP", type:"line", data: rows.map(() => cap), symbol:"none", lineStyle:{color:"#ef4444", type:"dashed"}, yAxisIndex: 0 });
+  }
+  c.setOption({
+    tooltip:{trigger:"axis"}, legend:{bottom:0},
+    grid:{left:36, right:60, top:16, bottom:40},
+    xAxis:{type:"category", data: rows.map(r => String(r.day).slice(5,10))},
+    yAxis:[{type:"value", name:"turns"},{type:"value", name:"tokens"}],
+    series: series,
+  });
+})();
+</script>
+{% endblock %}
+{% endblock %}

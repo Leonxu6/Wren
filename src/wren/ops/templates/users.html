@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}用户 · Wren ops{% endblock %}
+{% block crumb %}<b>用户</b> · 全部 chat_id · 按 last_active 倒序{% endblock %}
+{% block content %}
+
+<h1 class="page-title">用户 <span class="muted" style="font-weight:400;font-size:14px;">· {{ users|length }} 人</span></h1>
+<div class="page-sub">点击 chat_id 进单用户时间线;搜索框过滤 chat_id 后缀 / 来源</div>
+
+<div class="filterbar">
+  <input type="search" id="filter-text" placeholder="🔎 搜 chat_id 或 source(实时过滤)" oninput="filterTable()">
+  <span class="chip" data-filter="all" onclick="setChip(this, 'all')" id="chip-all">全部</span>
+  <span class="chip" data-filter="frozen" onclick="setChip(this, 'frozen')">❄ 冻结</span>
+  <span class="chip" data-filter="silent" onclick="setChip(this, 'silent')">silence&gt;30%</span>
+  <span class="chip" data-filter="lv2plus" onclick="setChip(this, 'lv2plus')">Lv≥2</span>
+  <span class="chip" data-filter="active" onclick="setChip(this, 'active')">今日活跃</span>
+  <span class="muted" style="margin-left:auto;font-size:12px;" id="visible-count"></span>
+</div>
+
+{% if users %}
+<table class="data" id="users-table">
+<thead><tr>
+  <th class="sortable" onclick="sortBy('chat_id')">chat_id <span class="sort-arrow">⇅</span></th>
+  <th class="sortable" onclick="sortBy('source')">source <span class="sort-arrow">⇅</span></th>
+  <th class="sortable" onclick="sortBy('lv')">lv <span class="sort-arrow">⇅</span></th>
+  <th>freeze</th>
+  <th class="sortable" onclick="sortBy('msg_count')">msgs <span class="sort-arrow">⇅</span></th>
+  <th>settles</th>
+  <th class="sortable" onclick="sortBy('silence_pct')">silence% <span class="sort-arrow">⇅</span></th>
+  <th class="sortable" onclick="sortBy('last_ts')">last_active <span class="sort-arrow">⇅</span></th>
+</tr></thead>
+<tbody>
+{% for u in users %}
+<tr class="user-row {% if u.freeze %}frozen{% endif %}"
+    data-chat-id="{{ u.chat_id }}"
+    data-source="{{ (u.source or '')|lower }}"
+    data-lv="{{ u.lv if u.lv is not none else -1 }}"
+    data-freeze="{{ 'true' if u.freeze else 'false' }}"
+    data-msg-count="{{ u.msg_count }}"
+    data-silence-pct="{{ u.silence_pct }}"
+    data-last-ts="{{ u.last_ts or '' }}">
+  <td>
+    <a href="/u/{{ u.chat_id }}" class="mono">{{ u.chat_id }}</a>
+    <div class="hash">{{ u.chat_hash }}</div>
+  </td>
+  <td>{{ u.source or '—' }}</td>
+  <td>
+    {% if u.lv is none %}
+      <span class="lv unknown">?</span>
+    {% else %}
+      <span class="lv lv{{ u.lv }}">Lv{{ u.lv }}</span>
+    {% endif %}
+  </td>
+  <td>{% if u.freeze %}<span class="bad-text">❄</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+  <td class="mono">{{ u.msg_count }}</td>
+  <td class="mono muted">{{ u.settle_count }}</td>
+  <td class="mono {% if u.silence_pct > 30 %}warn{% endif %}">{{ u.silence_pct }}%</td>
+  <td class="mono muted">{{ u.last_ts or '—' }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+
+{% block scripts %}
+<script>
+let activeChip = 'all';
+function setChip(el, kind) {
+  document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  activeChip = kind;
+  filterTable();
+}
+function filterTable() {
+  const q = (document.getElementById('filter-text').value || '').toLowerCase().trim();
+  const today = new Date().toISOString().slice(0, 10);
+  let visible = 0;
+  document.querySelectorAll('.user-row').forEach(tr => {
+    const cid = (tr.dataset.chatId || '').toLowerCase();
+    const src = tr.dataset.source || '';
+    const lv = parseInt(tr.dataset.lv);
+    const fr = tr.dataset.freeze === 'true';
+    const sp = parseFloat(tr.dataset.silencePct);
+    const ts = tr.dataset.lastTs || '';
+    let pass = true;
+    if (q && !cid.includes(q) && !src.includes(q)) pass = false;
+    if (activeChip === 'frozen' && !fr) pass = false;
+    if (activeChip === 'silent' && sp <= 30) pass = false;
+    if (activeChip === 'lv2plus' && lv < 2) pass = false;
+    if (activeChip === 'active' && !ts.startsWith(today)) pass = false;
+    tr.style.display = pass ? '' : 'none';
+    if (pass) visible++;
+  });
+  document.getElementById('visible-count').textContent = visible + ' / {{ users|length }}';
+}
+let sortState = { col: 'last_ts', desc: true };
+function sortBy(col) {
+  if (sortState.col === col) sortState.desc = !sortState.desc;
+  else { sortState.col = col; sortState.desc = true; }
+  const tbody = document.querySelector('#users-table tbody');
+  const rows = Array.from(tbody.querySelectorAll('.user-row'));
+  rows.sort((a, b) => {
+    const ka = col === 'lv' || col === 'msg_count' || col === 'silence_pct'
+      ? parseFloat(a.dataset[col.replace(/_(.)/g, (_, c) => c.toUpperCase())] || a.dataset[col])
+      : (a.dataset[col.replace(/_(.)/g, (_, c) => c.toUpperCase())] || a.dataset[col] || '');
+    const kb = col === 'lv' || col === 'msg_count' || col === 'silence_pct'
+      ? parseFloat(b.dataset[col.replace(/_(.)/g, (_, c) => c.toUpperCase())] || b.dataset[col])
+      : (b.dataset[col.replace(/_(.)/g, (_, c) => c.toUpperCase())] || b.dataset[col] || '');
+    let cmp = ka > kb ? 1 : (ka < kb ? -1 : 0);
+    return sortState.desc ? -cmp : cmp;
+  });
+  rows.forEach(r => tbody.appendChild(r));
+}
+// initial
+document.getElementById('chip-all').classList.add('active');
+filterTable();
+</script>
+{% endblock %}
+{% else %}
+<div class="empty">
+  还没有用户聊过(data/users/ 为空)。等第一条消息进来再来看。
+</div>
+{% endif %}
+{% endblock %}

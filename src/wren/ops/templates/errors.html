@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}错误 · Wren ops{% endblock %}
+{% block crumb %}<b>错误</b> · docker logs grep · 最近 24h{% endblock %}
+{% block content %}
+
+<h1 class="page-title">错误日志</h1>
+<div class="page-sub">从 wren-bot-1 容器 logs 里 grep error / exception / traceback / conflict / critical</div>
+
+<div class="kpi-row" style="grid-template-columns: repeat(2, 1fr);">
+  <div class="kpi-card">
+    <div class="label">近 1h</div>
+    {% if errors_1h.available %}
+      <div class="value {% if errors_1h.count and errors_1h.count > 0 %}bad-text{% else %}ok-text{% endif %}">{{ errors_1h.count }}</div>
+      <div class="sub-value">{% if errors_1h.count == 0 %}🟢 干净{% else %}⚠ 看下面具体行{% endif %}</div>
+    {% else %}<div class="value muted">—</div><div class="sub-value muted">docker socket 不可用</div>{% endif %}
+  </div>
+  <div class="kpi-card">
+    <div class="label">近 24h</div>
+    {% if errors_24h.available %}
+      <div class="value {% if errors_24h.count and errors_24h.count > 0 %}warn{% else %}ok-text{% endif %}">{{ errors_24h.count }}</div>
+      <div class="sub-value">{% if errors_24h.count == 0 %}🟢 干净{% else %}最近 {{ errors_24h.lines|length }} 条见下{% endif %}</div>
+    {% else %}<div class="value muted">—</div>{% endif %}
+  </div>
+</div>
+
+<h2 class="section-title">最近匹配的 error 行</h2>
+{% if errors_24h.available and errors_24h.lines %}
+<div class="card" style="padding:0;overflow:hidden;">
+{% for ln in errors_24h.lines | reverse %}
+<div style="padding:8px 14px;border-bottom:1px solid #f3f4f6;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#374151;">{{ ln }}</div>
+{% endfor %}
+</div>
+{% else %}
+<div class="empty">{% if errors_24h.available %}🟢 24h 内无错误{% else %}docker socket 不可用 — viewer 容器没有 mount /var/run/docker.sock?{% endif %}</div>
+{% endif %}
+{% endblock %}

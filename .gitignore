@@ -32,3 +32,8 @@ data/*.duckdb.wal
 *.log
 .idea/
 .vscode/
+
+# ===== VPS scp 回来的临时副本(不进版本库) =====
+*.vps
+RUN.md.vps
+W8*.md.vps

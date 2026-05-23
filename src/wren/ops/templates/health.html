@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% block title %}总览 · Wren ops{% endblock %}
+{% block crumb %}<b>总览</b> · 业务健康 + 产品指标 + 成本{% endblock %}
+{% block content %}
+
+<h1 class="page-title">总览</h1>
+<div class="page-sub">业务规模 · 今日活跃 · 产品健康 · 钱</div>
+
+<!-- ====== 第一排:4 大 KPI ====== -->
+<div class="kpi-row">
+  <div class="kpi-card">
+    <div class="label">总用户数</div>
+    <div class="value">{{ total_users }}<span class="unit">人</span></div>
+    <div class="sub-value">all-time 累计</div>
+    <div class="spark" id="spark-total"></div>
+  </div>
+  <div class="kpi-card">
+    <div class="label">今日活跃用户</div>
+    <div class="value">{{ active_today }}<span class="unit">人</span></div>
+    <div class="sub-value">今日发过消息</div>
+    <div class="spark" id="spark-active"></div>
+  </div>
+  <div class="kpi-card">
+    <div class="label">Lv≥2 占比</div>
+    <div class="value">{{ lv2_plus.pct }}<span class="unit">%</span></div>
+    <div class="sub-value">{{ lv2_plus.count }} / {{ lv2_plus.total }} 挣到关系</div>
+    <div class="spark" id="spark-lv2"></div>
+  </div>
+  <div class="kpi-card">
+    <div class="label">今日 cost</div>
+    <div class="value">${{ (h.today.cost_usd or 0) }}<span class="unit">USD</span></div>
+    {% if h.daily_cap.cap and h.daily_cap.cap > 0 %}
+      <div class="sub-value">DAILY_CAP {{ h.daily_cap.used }} / {{ h.daily_cap.cap }} ({{ h.daily_cap.pct }}%)</div>
+      <div class="progress"><div class="fill" style="width: {{ [h.daily_cap.pct or 0, 100]|min }}%"></div></div>
+    {% else %}
+      <div class="sub-value muted">DAILY_CAP unlimited</div>
+    {% endif %}
+    <div class="spark" id="spark-cost"></div>
+  </div>
+</div>
+
+<!-- ====== 第二排:6 mini ====== -->
+<div class="mini-row">
+  <div class="mini-card">
+    <div class="label">今日新增</div>
+    <div class="value">—</div>
+    <div class="spark" id="mini-new"></div>
+  </div>
+  <div class="mini-card">
+    <div class="label">激活率</div>
+    <div class="value">{{ (h.today.user_msgs or 0) > 0 and '100' or '0' }}<span class="unit">%</span></div>
+    <div class="spark" id="mini-activation"></div>
+  </div>
+  <div class="mini-card">
+    <div class="label">D7 留存</div>
+    <div class="value">—</div>
+    <div class="spark" id="mini-d7"></div>
+  </div>
+  <div class="mini-card">
+    <div class="label">今日 turn 数</div>
+    <div class="value">{{ h.today.user_msgs or 0 }}</div>
+    <div class="spark" id="mini-turns"></div>
+  </div>
+  <div class="mini-card">
+    <div class="label">silence_pct</div>
+    <div class="value">{{ h.today.silence_pct or 0 }}<span class="unit">%</span></div>
+    <div class="spark" id="mini-silence"></div>
+  </div>
+  <div class="mini-card">
+    <div class="label">近 1h 错误</div>
+    <div class="value {% if h.errors_1h.count and h.errors_1h.count > 0 %}bad-text{% else %}ok-text{% endif %}">
+      {{ h.errors_1h.count if h.errors_1h.available else '—' }}
+    </div>
+    <div class="muted" style="font-size:11px;margin-top:2px">{% if h.errors_1h.count == 0 %}🟢 干净{% else %}⚠ 注意{% endif %}</div>
+  </div>
+</div>
+
+<!-- ====== 服务状态 + 出网状态(运维必看) ====== -->
+<h2 class="section-title">服务 · 出网 · 资源</h2>
+<div class="kpi-row" style="grid-template-columns: repeat(3, 1fr);">
+  <div class="card">
+    <div class="card-title">容器 <span class="sub">3 个服务</span></div>
+    {% for key, c in h.containers.items() %}
+    <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
+      <span class="dot {{ 'ok' if c.status == 'running' else 'bad' }}"></span>
+      <b style="min-width:60px;">{{ key }}</b>
+      <span class="mono muted">{{ c.status }}</span>
+      {% if c.uptime_s %}<span class="muted" style="font-size:12px">· up {{ (c.uptime_s/3600)|round(1) }}h</span>{% endif %}
+      {% if c.restart_count and c.restart_count > 0 %}<span class="warn">restarts:{{ c.restart_count }}</span>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  <div class="card">
+    <div class="card-title">出网 <span class="sub">30s 缓存</span></div>
+    {% for key, n in h.net.items() %}
+    <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
+      <span class="dot {{ 'ok' if n.ok else 'bad' }}"></span>
+      <b style="min-width:80px;">{{ key }}</b>
+      {% if n.ok %}
+        <span class="mono muted">{{ n.code }}</span>
+        <span class="muted" style="font-size:12px">{{ n.latency_ms }}ms</span>
+      {% else %}
+        <span class="bad-text" style="font-size:12px">{{ n.error or 'DOWN' }}</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  <div class="card">
+    <div class="card-title">资源 <span class="sub">VPS host</span></div>
+    <div style="padding:4px 0;"><b style="min-width:60px;">CPU</b>
+      {% if h.resources.cpu.load_1m is not none %}
+        <span class="mono muted">{{ h.resources.cpu.load_1m }} · {{ h.resources.cpu.load_5m }} · {{ h.resources.cpu.load_15m }}</span>
+      {% endif %}
+    </div>
+    <div style="padding:4px 0;"><b style="min-width:60px;">RAM</b>
+      {% if h.resources.mem.used_pct is not none %}
+        <span class="mono">{{ h.resources.mem.used_pct }}%</span>
+        <span class="muted">{{ h.resources.mem.used_mb }}/{{ h.resources.mem.total_mb }} MB</span>
+      {% endif %}
+    </div>
+    <div style="padding:4px 0;"><b style="min-width:60px;">Disk</b>
+      {% if h.resources.disk.used_pct is not none %}
+        <span class="mono">{{ h.resources.disk.used_pct }}%</span>
+        <span class="muted">free {{ h.resources.disk.free_gb }} GB</span>
+      {% endif %}
+    </div>
+    <div style="padding:4px 0;"><b style="min-width:60px;">data/</b><span class="mono">{{ h.resources.sizes.data_mb or 0 }} MB</span></div>
+  </div>
+</div>
+
+<!-- ====== 6 大 echart 图表 ====== -->
+<h2 class="section-title">业务图表</h2>
+<div class="charts-grid">
+  <div class="card chart-card">
+    <div class="card-title">等级分布 <span class="sub">头号指标</span></div>
+    <div class="echart" id="chart-levels"></div>
+  </div>
+  <div class="card chart-card">
+    <div class="card-title">每晚 level 跃迁 <span class="sub">升 / 降 / 冻结 7d</span></div>
+    <div class="echart" id="chart-transitions"></div>
+  </div>
+  <div class="card chart-card">
+    <div class="card-title">每天 user_msgs <span class="sub">14d 折线</span></div>
+    <div class="echart" id="chart-engagement"></div>
+  </div>
+  <div class="card chart-card">
+    <div class="card-title">每天 cost <span class="sub">14d 柱状</span></div>
+    <div class="echart" id="chart-cost"></div>
+  </div>
+  <div class="card chart-card">
+    <div class="card-title">来源归因 <span class="sub">?start=&lt;campaign&gt;</span></div>
+    <div class="echart" id="chart-sources"></div>
+  </div>
+  <div class="card chart-card">
+    <div class="card-title">延迟 p50/p95 <span class="sub">7d step1 ms</span></div>
+    <div class="echart" id="chart-latency"></div>
+  </div>
+</div>
+
+<!-- 定时事件 + 备份 -->
+<h2 class="section-title">定时事件</h2>
+<div class="kpi-row" style="grid-template-columns: repeat(2, 1fr);">
+  <div class="card">
+    <div class="card-title">上次夜结算</div>
+    {% if h.settlement.ts %}
+      <div class="value" style="font-size:18px;font-weight:600">{{ h.settlement.ts }}</div>
+      <div class="muted" style="font-size:12px;margin-top:4px">{{ h.settlement.age_h }}h ago{% if h.settlement.age_h and h.settlement.age_h > 28 %} <span class="warn">⚠ 超过 28h</span>{% endif %}</div>
+    {% else %}<div class="muted">无记录</div>{% endif %}
+  </div>
+  <div class="card">
+    <div class="card-title">上次备份</div>
+    {% if h.backup.ts %}
+      <div class="value" style="font-size:18px;font-weight:600">{{ h.backup.ts }}</div>
+      <div class="muted" style="font-size:12px;margin-top:4px">{{ h.backup.age_h }}h ago · {{ h.backup.size_mb }} MB{% if h.backup.age_h and h.backup.age_h > 26 %} <span class="warn">⚠ 超过 26h</span>{% endif %}</div>
+    {% else %}<div class="bad-text">⚠ 无备份记录</div>{% endif %}
+  </div>
+</div>
+
+{% block scripts %}
+<script>
+window.__dash = {
+  spark_user_msgs: {{ spark_user_msgs | tojson }},
+  spark_silence: {{ spark_silence | tojson }},
+  spark_turns: {{ spark_turns | tojson }},
+  spark_tokens: {{ spark_tokens | tojson }},
+  level_distribution: {{ level_distribution | tojson }},
+  level_transitions: {{ level_transitions | tojson }},
+  engagement_history: {{ engagement_history | tojson }},
+  cost_history: {{ cost_history | tojson }},
+  latency_history: {{ latency_history | tojson }},
+  sources_distribution: {{ sources_distribution | tojson }},
+  daily_cap: {{ h.daily_cap | tojson }},
+};
+</script>
+<script src="{{ url_for('static', filename='dash.js') }}"></script>
+{% endblock %}
+{% endblock %}

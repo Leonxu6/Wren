@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}系统 · Wren ops{% endblock %}
+{% block crumb %}<b>系统</b> · 容器 · 磁盘 · 备份 · 环境变量{% endblock %}
+{% block content %}
+
+<h1 class="page-title">系统状态</h1>
+<div class="page-sub">VPS 运行时 + 容器 + 配置 + 备份 — 一站式排查</div>
+
+<div class="kpi-row" style="grid-template-columns: repeat(3, 1fr);">
+  <div class="card">
+    <div class="card-title">容器 <span class="sub">3 个服务</span></div>
+    {% for key, c in h.containers.items() %}
+    <div style="padding:6px 0;border-bottom:1px solid #f3f4f6;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="dot {{ 'ok' if c.status == 'running' else 'bad' }}"></span>
+        <b style="min-width:60px;">{{ key }}</b>
+        <span class="mono muted">{{ c.status }}</span>
+      </div>
+      <div class="muted mono" style="font-size:11px;margin-top:2px;padding-left:18px;">
+        {% if c.image %}image: {{ c.image }}<br>{% endif %}
+        {% if c.uptime_s %}uptime: {{ (c.uptime_s/3600)|round(1) }}h · {% endif %}
+        restarts: {{ c.restart_count or 0 }}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="card">
+    <div class="card-title">资源</div>
+    <div style="padding:6px 0"><b>CPU</b>
+      {% if h.resources.cpu.load_1m is not none %}<span class="mono muted">{{ h.resources.cpu.load_1m }} / {{ h.resources.cpu.load_5m }} / {{ h.resources.cpu.load_15m }}</span>{% endif %}
+    </div>
+    <div style="padding:6px 0"><b>RAM</b>
+      {% if h.resources.mem.used_pct is not none %}<span class="mono">{{ h.resources.mem.used_pct }}%</span> <span class="muted">({{ h.resources.mem.used_mb }}/{{ h.resources.mem.total_mb }} MB)</span>{% endif %}
+    </div>
+    <div style="padding:6px 0"><b>Disk /</b>
+      {% if h.resources.disk.used_pct is not none %}<span class="mono">{{ h.resources.disk.used_pct }}%</span> <span class="muted">free {{ h.resources.disk.free_gb }} GB</span>{% endif %}
+    </div>
+    <div style="padding:6px 0"><b>data/</b> <span class="mono">{{ h.resources.sizes.data_mb or 0 }} MB</span></div>
+    <div style="padding:6px 0"><b>world/</b> <span class="mono">{{ h.resources.sizes.world_mb or 0 }} MB</span></div>
+    <div style="padding:6px 0"><b>backups/</b> <span class="mono">{{ h.resources.sizes.backups_mb or 0 }} MB</span></div>
+  </div>
+  <div class="card">
+    <div class="card-title">备份</div>
+    {% if h.backup.ts %}
+      <div class="value mono" style="font-size:14px;">{{ h.backup.ts }}</div>
+      <div class="muted" style="font-size:12px;margin-top:4px;">{{ h.backup.age_h }}h ago · {{ h.backup.size_mb }} MB</div>
+      {% if h.backup.age_h > 26 %}<div class="warn" style="margin-top:6px;">⚠ 超 26h 未备份(cron 跑了吗?)</div>{% endif %}
+    {% else %}<div class="bad-text">⚠ 无备份记录</div>{% endif %}
+    <hr style="border:none;border-top:1px solid #f3f4f6;margin:10px 0;">
+    <div><b>上次夜结算</b></div>
+    {% if h.settlement.ts %}
+      <div class="muted mono" style="font-size:12px;margin-top:2px;">{{ h.settlement.ts }} · {{ h.settlement.age_h }}h ago</div>
+    {% else %}<div class="muted">无记录</div>{% endif %}
+  </div>
+</div>
+
+<h2 class="section-title">环境变量(已填 / 空)</h2>
+<div class="card" style="padding:0;">
+<table class="data" style="border:none;border-radius:0;">
+  <thead><tr><th>KEY</th><th>状态</th><th>说明</th></tr></thead>
+  <tbody>
+  {% for e in env_status %}
+  <tr>
+    <td class="mono">{{ e.key }}</td>
+    <td>{% if e.filled %}<span class="badge ok">✓ 已填</span>{% else %}<span class="badge bad">✗ 空</span>{% endif %}</td>
+    <td class="muted" style="font-size:12px;">
+      {% if e.key == 'TELEGRAM_BOT_TOKEN' %}必填,bot 起不来{% endif %}
+      {% if e.key == 'WREN_API_KEY' %}必填(否则 fake 模式){% endif %}
+      {% if e.key == 'WREN_OWNER_CHAT_IDS' %}公开发布必设(防 /setlevel 跳级){% endif %}
+      {% if e.key == 'WREN_METRICS_SALT' %}公开发布必设(防 chat_hash 反推){% endif %}
+      {% if e.key == 'WREN_DAILY_TURN_CAP' %}成本天花板,建议设{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

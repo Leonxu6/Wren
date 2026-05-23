@@ -39,11 +39,23 @@ diff -r /srv/wren/data /tmp/restore-check/data && echo OK
 ```bash
 docker compose exec bot uv run wren-metrics query per_user_overview   # 看板:问题用户置顶
 docker compose exec bot uv run wren-metrics diagnose --chat-id <id>   # 深挖某用户完整旅程
-# 看板 UI(只读、绑 localhost、SSH 隧道,绝不公网):
+# Datasette 看板 UI(只读、绑 localhost、SSH 隧道,绝不公网):
 uv tool install datasette && datasette serve data/metrics.duckdb --host 127.0.0.1 --port 8001
 #   本机:ssh -L 8001:127.0.0.1:8001 <vps> → 开 http://localhost:8001
 ```
-闭环详见 [OBSERVABILITY](OBSERVABILITY.md):看板发现 → diagnose → 改 step1/persona → 重跑 aliveness+multiturn → 信号回落。
+
+### 5.1 W8 运维平台 `wren-view`(推荐主入口)
+viewer 容器(`network_mode: host`, bind `127.0.0.1:8002`)合并了健康总览 + 用户列表 + 单用户时间线(每轮内心独白 + 夜结算重写):
+```bash
+# 本机起 SSH 隧道一次性映射 viewer:
+ssh -fN -L 8002:127.0.0.1:8002 -p <SSH_PORT> root@<VPS_IP>
+open http://localhost:8002   # / 健康总览 · /users 用户列表 · /u/<chat_id> 单用户时间线
+
+# 用完关掉隧道(可选):
+pkill -f "ssh -fN -L 8002"
+```
+**隐私铁律守住**: viewer 通过 `before_request` 中间件硬限 `request.remote_addr ∈ {127.0.0.1, ::1}`;命令行传 `--host 0.0.0.0` 也被强制改回 127.0.0.1。原文仅在本机渲染,不进库不出机。
+闭环详见 [OBSERVABILITY](OBSERVABILITY.md):看板发现 → diagnose / viewer 看每轮内心 → 改 step1/persona → 重跑 aliveness+multiturn → 信号回落。
 
 ## 6. 环境变量速查
 | 变量 | 用途 |

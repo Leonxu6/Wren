@@ -8,6 +8,7 @@ dependencies = [
     "python-telegram-bot[job-queue]>=21,<22",  # [job-queue]:夜结算 run_daily + debounce 都靠 JobQueue
     "pyyaml>=6",
     "python-dotenv>=1",
+    "flask>=3.0",  # W8 viewer(运维平台,绑 127.0.0.1 + SSH 隧道);仅 wren-view 用,不进 bot/metrics 热路径
 ]
 
 [project.scripts]
@@ -17,6 +18,7 @@ wren-aliveness = "wren.eval.aliveness:main"
 wren-bot = "wren.bot.app:main"
 wren-nightly = "wren.bot.nightly:main"
 wren-metrics = "wren.ops.cli:main"  # W6 监测库 CLI(只读消费 data/,跑在 bot 进程外)
+wren-view = "wren.ops.web:main"  # W8 运维平台(Flask,127.0.0.1:8002 + SSH 隧道;隐私铁律守住)
 
 [dependency-groups]
 dev = [

@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}等级 · Wren ops{% endblock %}
+{% block crumb %}<b>等级</b> · 分布 + 跃迁 + 卡级置顶{% endblock %}
+{% block content %}
+
+<h1 class="page-title">等级分析</h1>
+<div class="page-sub">关系到底有没有挣 — Lv≥2 占比、每晚升降、谁卡在 Lv0/Lv1 没动</div>
+
+<div class="charts-grid" style="grid-template-columns: repeat(2, 1fr);">
+  <div class="card chart-card">
+    <div class="card-title">等级分布 <span class="sub">头号指标</span></div>
+    <div class="echart" id="chart-levels-big" style="height:320px"></div>
+  </div>
+  <div class="card chart-card">
+    <div class="card-title">每晚跃迁 <span class="sub">14d 升 / 降 / 冻结 / 解冻</span></div>
+    <div class="echart" id="chart-transitions-big" style="height:320px"></div>
+  </div>
+</div>
+
+<div class="kpi-row" style="grid-template-columns: repeat(2, 1fr);margin-top:16px;">
+  <div class="card">
+    <div class="card-title">中位达 Lv2 / Lv3 时间</div>
+    <div class="value" style="font-size:24px;font-weight:700;">
+      Lv2: {{ time_to_level.median_days_to_lv2 or '—' }} 天 ·
+      Lv3: {{ time_to_level.median_days_to_lv3 or '—' }} 天
+    </div>
+    <div class="muted" style="font-size:12px;margin-top:6px;">从首条消息算起</div>
+  </div>
+  <div class="card">
+    <div class="card-title">卡级用户(Lv0-1 但聊得多)</div>
+    {% set stuck = users | selectattr('msg_count', 'gt', 5) | rejectattr('lv', 'none') | selectattr('lv', 'lt', 2) | list %}
+    {% if stuck %}
+      <div class="value" style="font-size:24px;font-weight:700;">{{ stuck|length }} 人</div>
+      <div class="muted" style="font-size:12px;margin-top:4px;">聊&gt;5 条但还在 Lv0-1</div>
+    {% else %}
+      <div class="muted">无卡级用户(全部在 Lv2+ 或还没聊够)</div>
+    {% endif %}
+  </div>
+</div>
+
+<h2 class="section-title">用户等级排行(高 lv 在前)</h2>
+{% set users_sorted = users | sort(attribute='lv', reverse=True) %}
+<table class="data">
+  <thead><tr><th>chat_id</th><th>lv</th><th>freeze</th><th>msgs</th><th>silence</th><th>last_active</th></tr></thead>
+  <tbody>
+  {% for u in users_sorted[:30] %}
+  <tr {% if u.freeze %}class="frozen"{% endif %}>
+    <td><a href="/u/{{ u.chat_id }}" class="mono">{{ u.chat_id }}</a></td>
+    <td>{% if u.lv is none %}<span class="lv unknown">?</span>{% else %}<span class="lv lv{{ u.lv }}">Lv{{ u.lv }}</span>{% endif %}</td>
+    <td>{% if u.freeze %}<span class="bad-text">❄</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+    <td class="mono">{{ u.msg_count }}</td>
+    <td class="mono {% if u.silence_pct > 30 %}warn{% endif %}">{{ u.silence_pct }}%</td>
+    <td class="mono muted">{{ u.last_ts or '—' }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+{% block scripts %}
+<script>
+window.__dash = {
+  level_distribution: {{ level_distribution | tojson }},
+  level_transitions: {{ level_transitions | tojson }},
+};
+(function() {
+  const lvColors = ["#94a3b8","#94a3b8","#3b82f6","#3b82f6","#7c3aed","#7c3aed","#ec4899"];
+  // 等级分布
+  const dist = window.__dash.level_distribution || [];
+  const elL = document.getElementById('chart-levels-big');
+  if (dist.length) {
+    const c = echarts.init(elL);
+    c.setOption({
+      tooltip: { trigger: "item" },
+      legend: { bottom: 0, type: "scroll" },
+      series: [{
+        type: "pie", radius: ["40%", "72%"],
+        itemStyle: { borderRadius: 6, borderColor: "#fff", borderWidth: 2 },
+        label: { formatter: "{b}\n{c} 人 · {d}%" },
+        data: dist.map(r => ({ name: "Lv"+r.lv, value: r.users, itemStyle: { color: lvColors[r.lv] || "#94a3b8" } })),
+      }],
+    });
+  } else { elL.innerHTML = '<div style="display:flex;height:100%;align-items:center;justify-content:center;color:#9ca3af">无数据</div>'; }
+
+  // 每晚跃迁
+  const tr = window.__dash.level_transitions || [];
+  const elT = document.getElementById('chart-transitions-big');
+  if (tr.length) {
+    const c = echarts.init(elT);
+    c.setOption({
+      tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
+      legend: { bottom: 0 },
+      grid: { left: 36, right: 12, top: 16, bottom: 40 },
+      xAxis: { type: "category", data: tr.map(r => String(r.night).slice(5,10)), axisLabel: { fontSize: 11 } },
+      yAxis: { type: "value", axisLabel: { fontSize: 11 } },
+      series: [
+        { name:"升级",  type:"bar", stack:"a", data: tr.map(r => r.promotions||0),     itemStyle:{color:"#10b981"} },
+        { name:"降级",  type:"bar", stack:"a", data: tr.map(r => -(r.regressions||0)), itemStyle:{color:"#f59e0b"} },
+        { name:"新冻结",type:"bar", stack:"a", data: tr.map(r => -(r.new_freezes||0)), itemStyle:{color:"#ef4444"} },
+        { name:"解冻",  type:"bar", stack:"a", data: tr.map(r => r.thaws||0),          itemStyle:{color:"#3b82f6"} },
+      ],
+    });
+  } else { elT.innerHTML = '<div style="display:flex;height:100%;align-items:center;justify-content:center;color:#9ca3af">无夜结算记录</div>'; }
+})();
+</script>
+{% endblock %}
+{% endblock %}

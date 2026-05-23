@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}夜结算 · Wren ops{% endblock %}
+{% block crumb %}<b>夜结算</b> · 最近 50 次 + 健康历史{% endblock %}
+{% block content %}
+
+<h1 class="page-title">夜结算 <span class="muted" style="font-weight:400;font-size:14px;">{{ settlements|length }} 条</span></h1>
+<div class="page-sub">每晚 02:30 ET 自动跑 · prose 是否真的重写了 · 等级有没有动</div>
+
+<div class="card chart-card" style="margin-bottom:16px;">
+  <div class="card-title">14d 夜结算健康(每晚跑了几人 / parse_ok 比例)</div>
+  <div class="echart" id="chart-nightly-health" style="height:240px"></div>
+</div>
+
+<h2 class="section-title">最近 50 次结算</h2>
+{% if settlements %}
+<div style="display:flex;flex-direction:column;gap:10px;">
+  {% for s in settlements %}
+  {% set b = s.before or {} %}
+  {% set a = s.after or {} %}
+  {% set j = s.judge or {} %}
+  <div class="settle-card" id="settle-list-{{ loop.index }}">
+    <div class="settle-head" onclick="document.getElementById('settle-list-{{ loop.index }}').classList.toggle('expanded')">
+      <span class="moon">🌙</span>
+      <span style="font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#7c3aed">{{ s.ts }}</span>
+      <a href="/u/{{ s.chat_id }}" class="mono" style="color:#3b82f6;text-decoration:none;">{{ s.chat_id }}</a>
+      <span class="lv-trans">Lv {{ b.get('lv') }} → {{ a.get('lv') }}</span>
+      <span class="muted" style="font-size:12px">freeze {{ b.get('freeze') }} → {{ a.get('freeze') }}</span>
+      <span style="margin-left:auto;color:#a78bfa;font-size:12px">▼ prose</span>
+    </div>
+    <div class="settle-body">
+      {% if j.get('raw_out') %}
+      <div class="prose-pretty">{{ j.raw_out | tojson_pretty }}</div>
+      {% endif %}
+      {% if s.impressions %}
+      <div class="imp-list" style="margin-top:10px;">
+        {% for imp in s.impressions %}<span class="imp-chip">{{ imp }}</span>{% endfor %}
+      </div>
+      {% endif %}
+      <div class="meta-line" style="margin-top:10px;">
+        <span>model={{ j.get('model') or '?' }}</span>
+        <span>tokens={{ j.get('tokens') or '?' }}</span>
+        <span>latency_ms={{ j.get('latency_ms') or '?' }}</span>
+        <span>parse_ok={{ j.get('parse_ok') }}</span>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty">还没有夜结算记录(等首次 ET 02:30 自动触发)</div>
+{% endif %}
+
+{% block scripts %}
+<script>
+window.__dash = { health_history: {{ health_history | tojson }} };
+(function() {
+  const rows = window.__dash.health_history || [];
+  const el = document.getElementById('chart-nightly-health');
+  if (!rows.length) { el.innerHTML = '<div style="display:flex;height:100%;align-items:center;justify-content:center;color:#9ca3af">无健康历史</div>'; return; }
+  const c = echarts.init(el);
+  c.setOption({
+    tooltip:{trigger:"axis"}, legend:{bottom:0},
+    grid:{left:36, right:32, top:16, bottom:40},
+    xAxis:{type:"category", data: rows.map(r => String(r.night).slice(5,10))},
+    yAxis:[{type:"value", name:"runs"},{type:"value", name:"tokens"}],
+    series:[
+      { name:"settlements_run", type:"bar", data: rows.map(r => r.settlements_run||0), itemStyle:{color:"#a78bfa"} },
+      { name:"settlements_ok",  type:"bar", data: rows.map(r => r.settlements_ok||0), itemStyle:{color:"#7c3aed"} },
+      { name:"tokens",          type:"line", yAxisIndex:1, data: rows.map(r => r.settle_tokens||0), itemStyle:{color:"#3b82f6"}, smooth:true },
+    ],
+  });
+})();
+</script>
+{% endblock %}
+{% endblock %}

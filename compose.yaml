@@ -19,3 +19,21 @@ services:
       - ./world:/app/world
     # 跑在 bot 进程外(故障隔离);每 ~15min 增量幂等灌库。
     command: ["sh", "-c", "while true; do uv run wren-metrics ingest || true; sleep 900; done"]
+
+  viewer:
+    # W8 运维平台:健康总览 / 用户列表 / 单用户时间线(每轮内心 + 夜结算重写)。
+    # 隐私铁律:绑 127.0.0.1 + before_request 拒非 localhost,SSH 隧道访问(绝不公网)。
+    build: .
+    restart: always
+    env_file: .env
+    volumes:
+      - ./data:/app/data # 读 trace.jsonl/settlement.jsonl + metrics.duckdb
+      - ./world:/app/world
+      - /srv/wren-backups:/srv/wren-backups:ro # W8.1 修:让 viewer 能看到上次备份大小+时间
+      - /var/run/docker.sock:/var/run/docker.sock:ro # 读容器状态(只读)
+    # network_mode=host: 容器共享 host net ns,bind 127.0.0.1 = host 127.0.0.1。
+    # 不用 docker port mapping(那会让容器看到 bridge IP,触发我们的 remote_addr 拒绝中间件)。
+    # 外部公网到 host 8002 直接 connection refused(viewer 不在 0.0.0.0 上 listen)。
+    network_mode: host
+    command: ["uv", "run", "wren-view"]
+    # web.py SAFETY:命令行传 --host 0.0.0.0 也会被强制改回 127.0.0.1(隐私铁律,绝不可暴露公网)。
