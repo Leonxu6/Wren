@@ -18,7 +18,34 @@ services:
       - ./data:/app/data # 只读消费 trace → 写 data/metrics.duckdb
       - ./world:/app/world
     # 跑在 bot 进程外(故障隔离);每 ~15min 增量幂等灌库。
-    command: ["sh", "-c", "while true; do uv run wren-metrics ingest || true; sleep 900; done"]
+    # 失败处理(#24):不再 `|| true` 永久吞失败 —— 连续 3 次失败 → exit 1,
+    # 让 restart: always + healthcheck 把"metrics DB 静默陈旧"暴露成 docker ps unhealthy 信号。
+    command:
+      - sh
+      - -c
+      - |
+        fail=0
+        while true; do
+          if uv run wren-metrics ingest; then
+            fail=0
+          else
+            fail=$((fail+1))
+            echo "⚠️  ingest 失败 (连续 $fail/3)" >&2
+            if [ "$fail" -ge 3 ]; then
+              echo "✗ ingest 连续 3 次失败,退出让 restart 暴露问题(#24)" >&2
+              exit 1
+            fi
+          fi
+          sleep 900
+        done
+    # healthcheck:metrics.duckdb 30min 内有修改 = healthy;否则 ingest 静默陈旧 → unhealthy。
+    # interval=5m + retries=2 → 失败窗口 ≤ 10min,远小于 30min mtime 阈值;启动 25min 宽限。
+    healthcheck:
+      test: ["CMD-SHELL", "test -n \"$(find /app/data/metrics.duckdb -mmin -30 2>/dev/null)\""]
+      interval: 5m
+      timeout: 10s
+      retries: 2
+      start_period: 25m
 
   viewer:
     # W8 运维平台:健康总览 / 用户列表 / 单用户时间线(每轮内心 + 夜结算重写)。
