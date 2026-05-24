@@ -102,27 +102,44 @@ async def cmd_help(update: Any, context: Any) -> None:
 
 
 async def cmd_delete(update: Any, context: Any) -> None:
-    """Wipe everything for this chat:停 pending → 取锁 → 清 buffer → 删目录 → 回执(#34)。
+    """Wipe everything for this chat:停 pending → 取锁 → 清 buffer → 删目录 →
+    清 metrics → 回执。
 
-    顺序很重要:
+    顺序:
     1. **先**取消同 chat 的 debounce job(否则 in-flight `_handle_and_send` 在
-       `store.init_user()` 时会**重建**刚被删的目录)
-    2. **再**进 `_chat_lock(chat_id)`,等任何 in-flight turn 跑完才动手(避免
-       在它写一半时被打断 → 留下半状态)
-    3. 锁内清 buffer + delete + 回执(确认时数据已真没了)
+       `store.init_user()` 时会**重建**刚被删的目录,#34)
+    2. **再**进 `_chat_lock(chat_id)`,等任何 in-flight turn 跑完才动手
+    3. 锁内清 buffer
+    4. 删 user dir
+    5. 同步清 metrics rows(#35;避免 dashboard 仍显示旧 hash 维度 + ingest_state
+       残留导致同 chat 重建后首轮被 ON CONFLICT DO NOTHING 跳过)
+    6. 回执(确认时所有面都没了,符合 "wipe everything")
     """
     chat_id = update.effective_chat.id
-    # 1) 取消 pending debounce job(避免 confirmation 后旧 buffer 被 flush 成 turn)
     if getattr(context, "job_queue", None):
         for job in context.job_queue.get_jobs_by_name(f"debounce-{chat_id}"):
             job.schedule_removal()
-    # 2) 进锁:in-flight turn 跑完才动;新 turn 也会等(同一把锁)
     async with _chat_lock(chat_id):
-        # 3) 锁内清 buffer(旧消息不该再被 flush 成 turn)
         if hasattr(context, "chat_data"):
             context.chat_data["buffer"] = []
-        # 4) 真删 → 再回执(确认时一定真没了,符合 "wipe everything")
         UserStore(str(chat_id)).delete()
+        # #35:同步清 metrics。函数内 import 避免 bot 启动期加载 ops/duckdb 依赖。
+        # 失败不阻塞 user dir 删除——user dir 已是命脉;metrics 是衍生,失败 log 即可。
+        try:
+            from ..ops.ingest import forget as metrics_forget
+
+            counts = metrics_forget(str(chat_id))
+            if any(counts.values()):
+                print(
+                    f"[delete {chat_id}] metrics cleared: "
+                    + " ".join(f"{k}={v}" for k, v in counts.items() if v),
+                    flush=True,
+                )
+        except Exception as e:  # noqa: BLE001 — metrics 失败不能阻塞用户 /delete
+            print(
+                f"[delete {chat_id}] metrics forget 失败(user dir 已删,metrics 留旧行):{e}",
+                flush=True,
+            )
         await context.bot.send_message(chat_id=chat_id, text=static_copy.DELETE_CONFIRM)
 
 

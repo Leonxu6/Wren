@@ -17,7 +17,7 @@ import duckdb
 
 from .. import config
 from ..core.trace import settlement_path, trace_path
-from .db import chat_hash, connect, create_schema
+from .db import chat_hash, connect, create_schema, metrics_db_path
 
 _TURN_COLS = 22
 _SETTLE_COLS = 13
@@ -220,13 +220,30 @@ def ingest(*, db_path: str | Path | None = None, data_root: str | Path | None = 
         con.close()
 
 
-def forget(chat_id: str, *, db_path: str | Path | None = None) -> None:
-    """硬删某用户在监测库的所有行(GDPR/对齐 /delete;按 chat_hash)。"""
-    chash = chat_hash(chat_id)
-    con = connect(db_path)
+_FORGET_TABLES = ("turns", "settlements", "users", "ingest_state")
+
+
+def forget(chat_id: str, *, db_path: str | Path | None = None) -> dict[str, int]:
+    """硬删某用户在监测库的所有行(GDPR/对齐 /delete;按 chat_hash)。
+
+    返回 {table_name: deleted_row_count},供 caller 验证(#35)。
+    metrics DB **不存在 → 全 0 dict** 直接 noop,不主动 create(避免 /delete 意外
+    生成空 .duckdb 文件——尤其本地开发还没跑过 ingest 时)。
+    """
+    db = Path(db_path) if db_path else metrics_db_path()
+    if not db.exists():
+        return dict.fromkeys(_FORGET_TABLES, 0)
+    chash = chat_hash(chat_id)  # 缺 salt 会 raise —— 让 caller 决定 fallback
+    con = connect(db)
+    counts: dict[str, int] = {}
     try:
         create_schema(con)
-        for tbl in ("turns", "settlements", "users", "ingest_state"):
-            con.execute(f"DELETE FROM {tbl} WHERE chat_hash=?", [chash])
+        for tbl in _FORGET_TABLES:
+            # DuckDB DELETE 不返 rowcount;用 RETURNING 1 拿到删除行数
+            rows = con.execute(
+                f"DELETE FROM {tbl} WHERE chat_hash=? RETURNING 1", [chash]
+            ).fetchall()
+            counts[tbl] = len(rows)
     finally:
         con.close()
+    return counts
