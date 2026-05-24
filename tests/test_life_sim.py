@@ -150,5 +150,80 @@ def test_run_life_sim_retries_on_empty(world_root: Path) -> None:
     """模型偶发空输出 → 重试一次再兜底(用上重试的好输出,而非 fallback)。"""
     model = FakeChatModel(script=["", _GOOD_WORLD])  # 第一次空,第二次好
     content = run_life_sim(MockClock(_DAY0), WorldStore(), model)
-    assert "cafe open" in content  # 用了重试的好输出(_GOOD_WORLD),不是 fallback
-    assert len(model.calls) == 2  # 确实重试了一次
+    assert "cafe open" in content
+    assert len(model.calls) == 2
+
+
+# === #28:validator + failure-path 修复(world LLM 异常/截断/缺 beats 都不污染下游)===
+
+
+class _RaisingModel:
+    """fake model that raises on .complete() — 模拟 world LLM 异常/超时。"""
+
+    def __init__(self, msg: str = "world model down") -> None:
+        self.name = "raise-world"
+        self._msg = msg
+        self.calls: list = []
+
+    def complete(self, messages, **_):  # type: ignore[no-untyped-def]
+        self.calls.append(messages)
+        raise RuntimeError(self._msg)
+
+
+def test_validate_today_rejects_missing_sections() -> None:
+    """#28 validator:缺 `## her day` / 缺 `## beats` / 无可解析 Beat → False。"""
+    from wren.prompts.life_sim import validate_today
+
+    assert not validate_today("")
+    assert not validate_today("x" * 39)
+    assert not validate_today("## beats\n- [window: 10:00–11:00] something\n" + "x" * 50)
+    assert not validate_today("## her day\n07:00–08:00 — wake.\n" + "x" * 50)
+    assert not validate_today("## her day\n07:00–08:00 — wake.\n## beats\n" + "x" * 50)
+    good = (
+        "## her day\n07:00–08:00 — wake.\n## mood\ntired.\n"
+        "## beats\n- [window: 10:00–11:00] something small\n"
+    )
+    assert validate_today(good)
+
+
+def test_run_life_sim_falls_back_when_model_raises(world_root: Path) -> None:
+    """#28 核心:模型抛异常 + retry 也抛 → fallback world(不上抛、不污染下游)。"""
+    model = _RaisingModel(msg="provider 5xx")
+    content = run_life_sim(MockClock(_DAY0), WorldStore(), model)
+    assert len(model.calls) == 2  # retry 一次
+    assert "## her day" in content
+    assert "## beats" in content
+    assert len(parse_beats(content)) >= 1, "fallback 必带 beats(P5 才能 work)"
+
+
+def test_run_life_sim_falls_back_when_model_returns_truncated(
+    world_root: Path,
+) -> None:
+    """#28:模型返回只有 `## her day`、无 `## beats` → fallback,
+    不让 dashboard"看似有 world 但 P5 永不发"。"""
+    truncated = "## her day\n07:00–08:00 — got up. nothing else.\n## mood\ntired.\n"
+    model = FakeChatModel(script=[truncated, truncated])
+    content = run_life_sim(MockClock(_DAY0), WorldStore(), model)
+    assert len(parse_beats(content)) >= 1, "截断输出 → fallback 必带 beats"
+
+
+def test_run_life_sim_falls_back_when_no_parseable_beats(
+    world_root: Path,
+) -> None:
+    """#28:`## beats` section 存在但无可解析 `- [window: ...]` 行 → fallback。"""
+    no_beats = (
+        "## her day\n07:00–08:00 — coffee.\n## mood\nfine.\n"
+        "## beats\nshe doesn't really have plans today.\n"
+    )
+    model = FakeChatModel(script=[no_beats, no_beats])
+    content = run_life_sim(MockClock(_DAY0), WorldStore(), model)
+    assert len(parse_beats(content)) >= 1
+
+
+def test_fallback_body_itself_is_valid() -> None:
+    """sanity:`_FALLBACK_BODY` 自身满足 validate_today(防 future 改 fallback 漏 beats)。"""
+    from wren.prompts.life_sim import _FALLBACK_BODY, validate_today
+
+    body = _FALLBACK_BODY.format(weighing="testing")
+    assert validate_today(body)
+    assert len(parse_beats(body)) >= 1

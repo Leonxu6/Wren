@@ -82,7 +82,9 @@ tired + wired + self-doubting.
 ## weighing on her
 {weighing}
 
-## beats"""
+## beats
+- [window: 23:00–02:00] late-night, brain looping
+"""
 
 
 def _first_thread(life_arcs: str) -> str:
@@ -157,10 +159,30 @@ def normalize_beats(body: str) -> str:
     return "\n".join(out)
 
 
+def validate_today(body: str) -> bool:
+    """world body 是否满足下游契约(#28):有 `## her day` + `## beats` 段,且至少 1 个可解析 Beat。
+
+    Step1 prompt 喂整篇,所以 `## her day` 缺失 = 行为/时段描述空白;
+    Phase 5 主动消息扫 beats,缺 `## beats` 或 beats=[] = scheduler 永不发(看似运行,实际死寂)。
+    pure validator,不动 prompt 文案或叙事行为(scope 严格,见 #28 unlock)。
+    """
+    if not body or len(body) < 40:
+        return False
+    low = body.lower()
+    if "## her day" not in low:
+        return False
+    if "## beats" not in low:
+        return False
+    # 至少 1 个可解析 Beat(本地 import 防循环)
+    from ..core.world import parse_beats
+    return bool(parse_beats(body))
+
+
 def assemble_today(date: str, model_text: str, life_arcs: str) -> str:
-    """保证 today.md 永远有 `date:` 头 + 可用主体;坏/空模型输出 → 最小合法 world(pipeline 不崩)。"""
+    """保证 today.md 永远满足下游契约;坏/空/缺 beats 模型输出 → 最小合法 fallback world。"""
     body = _DATE_LINE_RE.sub("", model_text or "").strip()  # date 由我们钉,去掉模型自带的
-    if len(body) < 40 or "## her day" not in body.lower():
+    body = normalize_beats(body)  # beats 规范成标准 window → 校验前先归一(防"24:00"等非法形态)
+    if not validate_today(body):
         body = _FALLBACK_BODY.format(weighing=_first_thread(life_arcs) or "(nothing acute today)")
-    body = normalize_beats(body)  # beats 规范成标准 window → Phase 5 投射可扫
+        body = normalize_beats(body)  # fallback 也归一(防 future 改 FALLBACK 时遗漏)
     return f"date: {date}\n\n{body}\n"

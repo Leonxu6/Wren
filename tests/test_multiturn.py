@@ -238,12 +238,17 @@ def test_proactive_bar_threshold_is_strictest() -> None:
 
 
 def test_proactive_tick_records_step_and_no_user_turn(data_root: Path) -> None:
-    """fake 默认 responder(life-sim 无 beats)→ tick 沉默,但仍记一条 kind=proactive 的 step。"""
+    """proactive tick 应记一条 `kind=proactive` 的 step,user_text='' 与 reactive turn 区分。
+
+    #28 后 fallback world 也带 beats(P5 才能 work);fake 默认 step1 reply 由 lenient
+    parser 决定 — 测试只约束"主动轮被记录 + user_text 为空",不约束 replied 真假。
+    """
     script = {s.id: s for s in load_multiturn()}["m-proactive-insomnia"]
     fake = _fake()
     run = run_script(script, "eval-pro-t", gen_model=fake, sim_model=fake, judge_model=fake, root=data_root)
     pro = [st for st in run.steps if st.kind == "proactive"]
-    assert len(pro) == 1 and pro[0].user_text == "" and pro[0].replied is False
+    assert len(pro) == 1
+    assert pro[0].user_text == ""
 
 
 def test_proactive_tick_fires_and_caps_frequency(data_root: Path) -> None:
