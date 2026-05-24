@@ -59,7 +59,31 @@ def settle_nightly(
     )
     parsed = parse_settlement(out.text)
 
-    # 缺字段 / 解析失败 → 回退旧值(防一次模型抽风把关系清零)。
+    # #29:malformed model output(全 schema 缺失/空字符串/截断 JSON)→ parse_ok=False
+    # **保留** relationship / core / unresolved / impressions —— 明晚同一批 impressions
+    # 重试。只落 trace + 早 return,避免一次模型抽风吃掉一天的素材。
+    if not parsed["parse_ok"]:
+        print(f"⚠️  [settle] {store.chat_id} malformed output(全 schema 缺失);"
+              f"保留 impressions,明晚 retry。", flush=True)
+        trace = SettlementTrace(
+            settlement_id=f"{store.chat_id}-settle-{count_settlements(store.dir) + 1}",
+            chat_id=store.chat_id,
+            ts=iso_z(clock.now()),
+            before={"lv": before.level, "freeze": before.freeze},
+            after={"lv": before.level, "freeze": before.freeze},  # 没变
+            impressions=impressions,
+            judge={
+                "raw_out": out.text,
+                "model": out.model,
+                "tokens": out.completion_tokens,
+                "latency_ms": out.latency_ms,
+                "parse_ok": False,
+            },
+        )
+        write_settlement_trace(store.dir, trace)
+        return SettlementOutcome(False, before, before, impressions, trace)
+
+    # 缺单字段 / 解析失败 → 回退旧值(防一次模型抽风把关系清零)。
     after = Relationship(
         level=parsed["level"] if parsed["level"] is not None else before.level,
         prose=parsed["prose"] or before.prose,
@@ -73,7 +97,7 @@ def settle_nightly(
     store.write_relationship(after)
     store.write_core_impression(new_core)
     store.write_unresolved(new_unresolved)
-    store.clear_impressions()
+    store.clear_impressions()  # 有效 settlement → 才 clear
 
     trace = SettlementTrace(
         settlement_id=f"{store.chat_id}-settle-{count_settlements(store.dir) + 1}",

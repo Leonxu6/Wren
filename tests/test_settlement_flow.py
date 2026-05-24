@@ -80,18 +80,59 @@ def test_settle_downgrade_and_freeze(data_root: Path) -> None:
     assert "cold" in rel.prose
 
 
-def test_settle_parse_failure_keeps_state(data_root: Path) -> None:
-    """模型抽风(空/坏输出)→ 各字段回退旧值,关系不被清零;但印象仍清空、trace 仍落。"""
+def test_settle_parse_failure_preserves_impressions_for_retry(data_root: Path) -> None:
+    """#29:malformed model output(全 schema 缺失)→ **保留** impressions,
+    让明晚同一批 impressions 重试;关系不变;trace 仍落(parse_ok=False)。
+
+    旧语义"印象仍清空"被 #29 否定:一次模型抽风不该吃掉一天的素材。
+    """
+    from wren.core.trace import read_settlements
+
     store = UserStore("settle4", data_root)
     store.init_user()
     store.write_relationship(Relationship(level=2, prose="steady.", freeze=False))
     store.append_impression("normal chat")
-    fake = FakeChatModel()  # 默认返回 "" → 解析全 None
+    fake = FakeChatModel()  # 默认返回 "" → parse_ok=False
 
     outcome = settle_nightly(store, fake)
 
     rel = store.read_relationship()
+    assert outcome.ran is False  # malformed → 未真结算
+    assert rel.level == 2 and rel.prose == "steady." and rel.freeze is False
+    # 关键修复:impressions **保留**(明晚 retry)
+    assert store.read_impressions() == ["normal chat"]
+    assert count_settlements(store.dir) == 1
+    rec = read_settlements(store.dir)[0]
+    assert rec["judge"]["parse_ok"] is False
+
+
+def test_settle_truncated_json_also_preserves_impressions(data_root: Path) -> None:
+    """#29:截断 JSON / 缺关键字段 → 同样 parse_ok=False,impressions 保留。"""
+    store = UserStore("settle5", data_root)
+    store.init_user()
+    store.write_relationship(Relationship(level=1, prose="warming.", freeze=False))
+    store.append_impression("they laughed at my joke")
+    store.append_impression("they got the painting")
+    # 截断 JSON(只有开头,缺 level/prose/core)
+    fake = FakeChatModel(script=['{"unrelated": "x"'])
+
+    outcome = settle_nightly(store, fake)
+
+    assert outcome.ran is False
+    # 两条 impression 全保留
+    assert store.read_impressions() == ["they laughed at my joke", "they got the painting"]
+    assert store.read_relationship().level == 1  # 关系不变
+
+
+def test_settle_valid_json_with_only_level_consumes_impressions(data_root: Path) -> None:
+    """#29:有意义字段(至少 level/prose/core 之一)→ parse_ok=True → 正常 clear。"""
+    store = UserStore("settle6", data_root)
+    store.init_user()
+    store.append_impression("real interaction")
+    # 只有 level,其它字段缺失 → parse_ok=True(因为 level 有意义)
+    fake = FakeChatModel(script=['{"level": 2}'])
+
+    outcome = settle_nightly(store, fake)
+
     assert outcome.ran is True
-    assert rel.level == 2 and rel.prose == "steady." and rel.freeze is False  # 回退,没清零
-    assert store.read_impressions() == []  # 印象仍清空
-    assert count_settlements(store.dir) == 1  # trace 仍落
+    assert store.read_impressions() == []  # 有效 settle → clear
