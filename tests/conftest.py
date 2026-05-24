@@ -15,11 +15,15 @@ from wren.model.base import ChatMessage
 @pytest.fixture(autouse=True)
 def _force_fake(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """所有测试默认离线 fake;删掉 .env 注入的真实 key,避免误调 API。
-    并把全局 world/ 指向 tmp —— life-sim 会写 today.md,测试绝不污染真实仓库 world/。"""
+    并把全局 world/ 指向 tmp —— life-sim 会写 today.md,测试绝不污染真实仓库 world/。
+
+    `WREN_ALLOW_VIEWER_NO_AUTH=1`:viewer auth(#45)默认放行,现有测试零侵入;
+    要测 fail-closed / 401 / 503 路径,在该 test 里 `monkeypatch.delenv` 它即可。"""
     monkeypatch.setenv("WREN_FAKE_MODEL", "1")
     monkeypatch.delenv("WREN_API_KEY", raising=False)
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.setenv("WREN_WORLD_ROOT", str(tmp_path / "world"))
+    monkeypatch.setenv("WREN_ALLOW_VIEWER_NO_AUTH", "1")
 
 
 @pytest.fixture

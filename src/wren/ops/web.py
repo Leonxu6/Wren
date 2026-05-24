@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hmac
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -133,11 +135,45 @@ def _user_list() -> list[dict[str, Any]]:
     return out
 
 
+def _require_viewer_auth() -> None:
+    """Layer 2 防御(#45):viewer 必须显式 token 才能读 raw trace / settlement。
+
+    localhost 绑定只防外部访问;同机任何进程(浏览器扩展、curl、本地网页)都能直
+    达 127.0.0.1:8002 → 仍能 dump raw 用户对话。token 让数据面真正"需要 credential"。
+
+    解析顺序:
+    1. `WREN_ALLOW_VIEWER_NO_AUTH=1` → 跳过(只给 dev / 测试 / 本地演示用,**生产绝不开**)
+    2. `WREN_VIEWER_TOKEN` 未设 → 503(fail closed,防 silent unauthenticated)
+    3. 请求带 `Authorization: Bearer <token>` 或 `?token=<token>` → 比对
+    4. 不匹配 → 401
+
+    用 `hmac.compare_digest` 防 timing attack。
+    """
+    if os.getenv("WREN_ALLOW_VIEWER_NO_AUTH", "").strip() == "1":
+        return
+    expected = os.getenv("WREN_VIEWER_TOKEN", "").strip()
+    if not expected:
+        abort(503, "WREN_VIEWER_TOKEN 未配置(见 #45 / RUNBOOK);"
+                   "本地/测试请显式 WREN_ALLOW_VIEWER_NO_AUTH=1")
+    got = ""
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        got = auth[7:].strip()
+    if not got:
+        got = request.args.get("token", "").strip()
+    if not got:
+        abort(401, "需要 Authorization: Bearer <token> 或 ?token=<token>")
+    if not hmac.compare_digest(got, expected):
+        abort(401, "token 不匹配")
+
+
 @app.before_request
 def _localhost_only() -> Any:
-    """硬限 remote_addr ∈ {127.0.0.1, ::1};即使 bind 误改 0.0.0.0 也兜底。"""
+    """Layer 1:硬限 remote_addr ∈ {127.0.0.1, ::1};即使 bind 误改 0.0.0.0 也兜底。
+    Layer 2:viewer token 认证(#45)—— SSH 隧道 + 同机进程也需要 credential。"""
     if request.remote_addr not in ("127.0.0.1", "::1"):
         abort(403, "localhost only (SSH 隧道访问)")
+    _require_viewer_auth()
     return None
 
 
