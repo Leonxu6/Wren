@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from wren.core.storage import UserStore
 from wren.core.trace import (
     SettlementTrace,
@@ -177,3 +179,71 @@ def test_diagnose_reconstructs_journey(data_root: Path) -> None:
     assert "5 轮" in report and "1 次夜结算" in report
     assert "SECRET_USERMSG" in report  # diagnose 读原始 trace(在机器上,供人工深挖)
     assert "lv 0→2" in report  # 结算可见
+
+
+# === #11:metrics salt fail-fast ===
+
+
+def test_chat_hash_raises_without_salt_or_dev_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """缺 WREN_METRICS_SALT 且未启用 dev override → chat_hash raise,
+    绝不 silent fallback 到源码默认盐(#11)。"""
+    from wren.ops.db import chat_hash
+
+    monkeypatch.delenv("WREN_METRICS_SALT", raising=False)
+    monkeypatch.delenv("WREN_ALLOW_DEV_METRICS_SALT", raising=False)
+    with pytest.raises(RuntimeError, match="WREN_METRICS_SALT"):
+        chat_hash("12345")
+
+
+def test_chat_hash_with_explicit_real_salt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """显式真 salt → 返回正常 hex,且与 dev salt 结果**不同**(证明 salt 真起作用)。"""
+    from wren.ops.db import chat_hash
+
+    monkeypatch.delenv("WREN_ALLOW_DEV_METRICS_SALT", raising=False)
+    monkeypatch.setenv("WREN_METRICS_SALT", "real-prod-salt-xyz")
+    h_real = chat_hash("12345")
+    monkeypatch.setenv("WREN_METRICS_SALT", "another-real-salt")
+    h_another = chat_hash("12345")
+    assert h_real != h_another  # salt 切换 → hash 变(防回归 hardcoded salt)
+    assert len(h_real) == 16  # 仍是 16 hex 前缀
+
+
+def test_chat_hash_with_dev_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """显式 dev override → 用源码 dev salt,不抛(本地 / CI / 测试用)。"""
+    from wren.ops.db import chat_hash
+
+    monkeypatch.delenv("WREN_METRICS_SALT", raising=False)
+    monkeypatch.setenv("WREN_ALLOW_DEV_METRICS_SALT", "1")
+    h = chat_hash("12345")
+    assert len(h) == 16
+
+
+def test_ingest_fails_fast_without_salt_and_creates_no_db(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#11 核心:缺 salt + 未启用 dev override → ingest raise 且**不留下空 DB 文件**。"""
+    _seed(data_root)
+    db = tmp_path / "should-not-exist.duckdb"
+    monkeypatch.delenv("WREN_METRICS_SALT", raising=False)
+    monkeypatch.delenv("WREN_ALLOW_DEV_METRICS_SALT", raising=False)
+    with pytest.raises(RuntimeError, match="WREN_METRICS_SALT"):
+        ingest(db_path=db, data_root=data_root)
+    assert not db.exists(), "fail-fast 必须在 connect 之前发生,否则会留下可发布的空 .duckdb"
+
+
+def test_ingest_works_with_dev_override(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """显式 dev override → ingest 正常运行(覆盖本地 / CI / 测试场景)。"""
+    _seed(data_root)
+    db = tmp_path / "m.duckdb"
+    monkeypatch.delenv("WREN_METRICS_SALT", raising=False)
+    monkeypatch.setenv("WREN_ALLOW_DEV_METRICS_SALT", "1")
+    c = ingest(db_path=db, data_root=data_root)
+    assert c["turns"] == 5  # 与 test_ingest_idempotent 一致

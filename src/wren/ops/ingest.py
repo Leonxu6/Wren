@@ -17,7 +17,7 @@ import duckdb
 
 from .. import config
 from ..core.trace import settlement_path, trace_path
-from .db import chat_hash, connect, create_schema
+from .db import chat_hash, connect, create_schema, require_metrics_salt
 
 _TURN_COLS = 22
 _SETTLE_COLS = 13
@@ -140,10 +140,17 @@ def _scalar(con: duckdb.DuckDBPyConnection, sql: str) -> int:
 
 
 def ingest(*, db_path: str | Path | None = None, data_root: str | Path | None = None) -> dict[str, int]:
-    """跑一遍 ETL,返回各表总行数。幂等可重复跑。"""
+    """跑一遍 ETL,返回各表总行数。幂等可重复跑。
+
+    fail fast:缺 `WREN_METRICS_SALT` 且未启用 `WREN_ALLOW_DEV_METRICS_SALT=1` →
+    raise RuntimeError、绝不 connect / 创建空 DB(#11)。
+    """
     root = Path(data_root) if data_root else config.data_root()
-    if not os.getenv("WREN_METRICS_SALT"):
-        print("⚠️  [metrics] WREN_METRICS_SALT 未设 → 用源码默认盐(chat_hash 可被反推);公开发布前务必设。", flush=True)
+    # 在 connect 之前 require salt:这样缺 salt 时不会留下空 .duckdb 文件
+    require_metrics_salt()
+    if not os.getenv("WREN_METRICS_SALT", "").strip():
+        print("⚠️  [metrics] WREN_METRICS_SALT 未设,走 WREN_ALLOW_DEV_METRICS_SALT 默认盐;此 DB **不可公开发布**(可被反推)。",
+              flush=True)
     con = connect(db_path)
     try:
         create_schema(con)
