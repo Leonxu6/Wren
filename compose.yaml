@@ -30,7 +30,10 @@ services:
       - ./data:/app/data # 读 trace.jsonl/settlement.jsonl + metrics.duckdb
       - ./world:/app/world
       - /srv/wren-backups:/srv/wren-backups:ro # W8.1 修:让 viewer 能看到上次备份大小+时间
-      - /var/run/docker.sock:/var/run/docker.sock:ro # 读容器状态(只读)
+      # 不挂 /var/run/docker.sock(#22):`:ro` 只防 fs 写,不约束 Docker API 动词;
+      # 一旦 viewer compromise,blast radius 会从"读 ops 数据"升级到"宿主 Docker 控制面"。
+      # `container_status()` 在 socket 不存在时已 fail-safe 返回 "unknown",dashboard 仍可渲染。
+      # 若以后真需要容器状态,走 docker-socket-proxy sidecar 只暴露 read-only endpoint。
     # network_mode=host: 容器共享 host net ns,bind 127.0.0.1 = host 127.0.0.1。
     # 不用 docker port mapping(那会让容器看到 bridge IP,触发我们的 remote_addr 拒绝中间件)。
     # 外部公网到 host 8002 直接 connection refused(viewer 不在 0.0.0.0 上 listen)。
