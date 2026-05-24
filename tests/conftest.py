@@ -16,7 +16,7 @@ from wren.model.base import ChatMessage
 def _force_fake(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """所有测试默认离线 fake;删掉 .env 注入的真实 key,避免误调 API。
     并把全局 world/ 指向 tmp —— life-sim 会写 today.md,测试绝不污染真实仓库 world/。
-
+    """
 
     monkeypatch.setenv("WREN_FAKE_MODEL", "1")
     monkeypatch.delenv("WREN_API_KEY", raising=False)
