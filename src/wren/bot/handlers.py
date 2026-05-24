@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import os
 import re
 from typing import Any
 
@@ -59,17 +61,48 @@ async def _handle_and_send(
     return outcome
 
 
+def _log_chat_hash(chat_id: int) -> str:
+    """日志用的轻量 chat_id 脱敏(8 hex,sha256("wren-log:" + id))。
+
+    **独立于** `ops.db.chat_hash`(它走 WREN_METRICS_SALT 机制,缺 salt 会 raise) ——
+    日志层不能因为 metrics salt 没配就让 bot 挂。运维 cross-ref dashboard 时需要
+    分别记录(本机制专用于日志;统一可后续 ticket)。
+    """
+    return hashlib.sha256(f"wren-log:{chat_id}".encode()).hexdigest()[:8]
+
+
 def _log_turn(chat_id: int, user_text: str, outcome: TurnOutcome) -> None:
-    """每轮一行实时对话流(flush 立即可见,便于 tail / 实时复盘)。"""
-    iv = (outcome.trace.step1.get("inner_voice_after") or "").replace("\n", " ").strip()
-    if len(iv) > 90:
-        iv = iv[:90] + "…"
-    print(f"\n[{chat_id}] user: {user_text!r}", flush=True)
-    print(f"   ▸ (thinks) {iv}", flush=True)
-    if outcome.replied:
-        print(f"   ▸ wren: {outcome.bubbles}  (waited {outcome.delay_s}s)", flush=True)
-    else:
-        print("   ▸ wren: — silence (left on read)", flush=True)
+    """每轮一行实时对话流(flush 立即可见,便于 tail / 实时复盘)。
+
+    **隐私默认脱敏(#20)**:Docker / 宿主 logs 不在 `/delete` 清理范围内 ——
+    生产环境绝不输出 raw `user_text` / `inner_voice_after` / `bubbles` / raw `chat_id`,
+    否则 `/delete` 文案的 "wipe everything" 承诺站不住。
+    默认只打结构化指标:`chash` / 各字段长度 / `replied` / `delay_s` / `bubble_count`。
+
+    Debug 模式:`WREN_DEBUG_RAW_LOGS=1` 才输出原文(本地排障用;**生产绝不开**,
+    打开后产生的日志不会被 `/delete` 清理)。
+    """
+    if os.getenv("WREN_DEBUG_RAW_LOGS", "").strip() == "1":
+        iv = (outcome.trace.step1.get("inner_voice_after") or "").replace("\n", " ").strip()
+        if len(iv) > 90:
+            iv = iv[:90] + "…"
+        print(f"\n[{chat_id}] user: {user_text!r}  ⚠ raw-logs(debug)", flush=True)
+        print(f"   ▸ (thinks) {iv}", flush=True)
+        if outcome.replied:
+            print(f"   ▸ wren: {outcome.bubbles}  (waited {outcome.delay_s}s)", flush=True)
+        else:
+            print("   ▸ wren: — silence (left on read)", flush=True)
+        return
+
+    # 默认:脱敏结构化指标
+    chash = _log_chat_hash(chat_id)
+    iv_len = len((outcome.trace.step1.get("inner_voice_after") or "").strip())
+    bubble_count = len(outcome.bubbles or [])
+    print(
+        f"\n[{chash}] user_len={len(user_text)} iv_len={iv_len} "
+        f"replied={outcome.replied} delay_s={outcome.delay_s} bubbles={bubble_count}",
+        flush=True,
+    )
 
 
 # ---------- 命令 ----------
