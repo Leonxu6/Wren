@@ -90,8 +90,14 @@ def build_settlement_messages(
 
 
 def parse_settlement(text: str) -> dict[str, Any]:
-    """解析结算输出。缺字段 / 解析失败 → 该字段 None,由 settle_nightly 回退到旧值
-    (防一次模型抽风把关系清零)。level 钳在合法域 0-6(非「每晚±1」手感 clamp)。"""
+    """解析结算输出。缺字段 / 解析失败 → 该字段 None,由 settle_nightly 决定保留或回退。
+
+    返回 `parse_ok`:**至少一个**有意义字段(level/prose/core 任一非 None)→ True;
+    全 None(空字符串 / 截断 JSON / 全 schema 缺失)→ False。
+    settle_nightly 看 parse_ok=False 时**保留** impressions / relationship,让明晚 retry(#29)。
+
+    level 钳在合法域 0-6;**不**在 fallback 路径里基于 raw_out 内容做 cue/keyword 分流(#29)。
+    """
     data = loads_lenient(text)
 
     level: int | None = None
@@ -112,4 +118,10 @@ def parse_settlement(text: str) -> dict[str, Any]:
             raw = [raw]
         unresolved = [str(u).strip() for u in raw if str(u).strip()]
 
-    return {"level": level, "freeze": freeze, "prose": prose, "core": core, "unresolved": unresolved}
+    # parse_ok = level/prose/core 任一有意义即可(freeze/unresolved 都是辅助,缺失也可)
+    parse_ok = level is not None or prose is not None or core is not None
+
+    return {
+        "level": level, "freeze": freeze, "prose": prose, "core": core,
+        "unresolved": unresolved, "parse_ok": parse_ok,
+    }
