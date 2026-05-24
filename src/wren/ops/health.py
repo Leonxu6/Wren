@@ -249,14 +249,25 @@ def last_settlement(data_root: Path | None = None) -> dict[str, Any]:
 
 
 def today_metrics() -> dict[str, Any]:
-    """从 metrics.duckdb 取今日指标。库不存在 → available=False。"""
+    """从 metrics.duckdb 取今日指标。库不存在 → available=False。
+
+    字段语义:
+    - `user_msgs` / `silence_pct`:来自 `engagement_daily`,**仅 reactive** 用户消息。
+    - `turn_count` / `completion_tokens` / `flash_s1_tokens`:来自 `cost_daily`,
+      `turn_count` 是**全 turn** 计数(reactive + proactive + scheduler),是
+      DAILY_CAP 应该参照的量,也是 cost dashboard 的"今日 turn 数"该展示的量。
+    - 这里不返回 `cost_usd`——项目无 pricing model(§15 开放问题),
+      过去那个字段实际上是 `cost_daily.turns` 错位填进 USD 槽,见 #10。
+      要看成本压力就看 `turn_count` + `completion_tokens` 两个真实信号。
+    """
     db = metrics_db_path()
     out: dict[str, Any] = {
         "available": False,
         "user_msgs": None,
         "silence_pct": None,
-        "cost_usd": None,
         "turn_count": None,
+        "completion_tokens": None,
+        "flash_s1_tokens": None,
     }
     if not db.exists():
         return out
@@ -280,7 +291,14 @@ def today_metrics() -> dict[str, Any]:
     try:
         _, rows = run_named(con, "cost_daily")
         r = next((r for r in rows if str(r[0]) == today), None)
-        out["cost_usd"] = r[1] if r else 0
+        if r:
+            out["turn_count"] = r[1]
+            out["completion_tokens"] = r[2]
+            out["flash_s1_tokens"] = r[3]
+        else:
+            out["turn_count"] = 0
+            out["completion_tokens"] = 0
+            out["flash_s1_tokens"] = 0
     except Exception:  # noqa: BLE001
         pass
     with contextlib.suppress(Exception):
@@ -302,14 +320,19 @@ def recent_errors(name: str = "wren-bot-1", hours: float = 1.0) -> dict[str, Any
 
 
 def daily_cap_used_pct() -> dict[str, Any]:
-    """今日 turn 数 vs WREN_DAILY_TURN_CAP 的进度。"""
+    """今日 turn 数 vs WREN_DAILY_TURN_CAP 的进度。
+
+    used = `turn_count`(全 turn,含 reactive + proactive + scheduler);
+    不能用 `user_msgs`——proactive turn 不计 user_msgs 但消耗 CAP,
+    用前者会让 dashboard 显示"还有余量",而真实 turn cap 已更逼近上限(#10)。
+    """
     cap_raw = os.getenv("WREN_DAILY_TURN_CAP", "0").strip() or "0"
     try:
         cap = int(cap_raw)
     except ValueError:
         cap = 0
     tm = today_metrics()
-    used = tm.get("user_msgs") or 0
+    used = tm.get("turn_count") or 0
     if cap <= 0:
         return {"cap": 0, "used": used, "pct": None}
     return {"cap": cap, "used": used, "pct": round(used / cap * 100, 1)}
