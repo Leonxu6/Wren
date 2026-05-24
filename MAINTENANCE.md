@@ -83,7 +83,9 @@
 ├── .env                    # secrets(chmod 600)
 └── scripts/backup.sh       # 备份脚本(cron 自动调)
 
-/srv/wren-backups/          # 备份归档(.tgz, 保留 14 份, cron 每日 UTC 08:00)
+/srv/wren-backups/          # 备份归档:.tgz.age 加密(生产 cron `--encrypt`,#36)
+                            # 或 .tgz 明文(本机短期,umask 077);保留 14 份;
+                            # cron 每日 UTC 08:00。**异地副本只 rsync .tgz.age**
 ```
 
 ---
@@ -92,15 +94,18 @@
 
 8 页运维平台，浅色 admin 风格 + echarts 图表 + 聊天泡泡 + 完整 trace。**只读**（不会改生产数据）。
 
-### 起隧道 + 打开
+### 起隧道 + 打开(生产必带 token,#45)
 ```bash
-# 一次性后台起隧道
+# 1) 一次性后台起隧道
 ssh -fN -L 8002:127.0.0.1:8002 -p 62769 root@104.233.146.220
-open http://localhost:8002
+
+# 2) 浏览器首次带 ?token,后续点 /users / /u/<chat_id> 自动走 cookie session
+open "http://localhost:8002/?token=$WREN_VIEWER_TOKEN"
 
 # 用完关
 pkill -f "ssh -fN -L 8002"
 ```
+(curl 用 `Authorization: Bearer $WREN_VIEWER_TOKEN`;生产无 token 时 viewer 启动会 503 fail closed。)
 
 ### 8 页都看什么
 
@@ -259,9 +264,23 @@ ssh -p 62769 root@104.233.146.220 'cd /srv/wren && docker compose logs -f bot'
 
 ### 🔥 数据恢复（最坏情况，data/ 误删）
 ```bash
-# 备份每天 UTC 08:00 自动跑
+# 1) 列归档(优先找 .tgz.age 加密产物;若环境还在过渡,可能也有 .tgz 明文)
 ssh -p 62769 root@104.233.146.220 'ls -lh /srv/wren-backups/'
-ssh -p 62769 root@104.233.146.220 'bash /srv/wren/scripts/restore.sh /srv/wren-backups/wren-<TS>.tgz /srv/wren'
+
+# 2) 加密归档(.tgz.age):先 openssl 解密到 tmp(passphrase 走 env 不留命令行)
+ssh -p 62769 root@104.233.146.220 \
+  'WREN_BACKUP_PASSPHRASE=<pass> openssl enc -d -aes-256-cbc -pbkdf2 \
+     -pass env:WREN_BACKUP_PASSPHRASE \
+     -in /srv/wren-backups/wren-<TS>.tgz.age -out /tmp/wren-<TS>.tgz'
+
+# 3) **必须先停服**(否则 live 写入与恢复交错 → 半新半旧,#27)
+ssh -p 62769 root@104.233.146.220 'cd /srv/wren && docker compose stop bot metrics viewer'
+
+# 4) 真要恢复 live(/srv/wren):
+ssh -p 62769 root@104.233.146.220 \
+  'bash /srv/wren/scripts/restore.sh /tmp/wren-<TS>.tgz --live && rm /tmp/wren-<TS>.tgz'
+ssh -p 62769 root@104.233.146.220 'cd /srv/wren && docker compose up -d --build && docker compose logs --tail=20 bot'
+# --live 自动备份当前 data/+world/ 到 /srv/wren/.pre-restore-<ts>/(失败时手动 mv 回滚)
 ```
 
 ### 🔥 token 冲突 `Conflict: terminated by other getUpdates`
@@ -278,9 +297,11 @@ ssh -p 62769 root@104.233.146.220 'cd /srv/wren && docker compose ps viewer'
 # 2. 重新起本机 SSH 隧道(后台 -fN,跑一次即可)
 ssh -fN -L 8002:127.0.0.1:8002 -p 62769 root@104.233.146.220
 
-# 3. 验证
-curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8002/   # 应 200
-open http://localhost:8002
+# 3. 验证(生产带 WREN_VIEWER_TOKEN 必须用 Authorization Header 或 ?token;#45)
+curl -s -o /dev/null -w "%{http_code}\n" \
+  -H "Authorization: Bearer $WREN_VIEWER_TOKEN" http://localhost:8002/   # 应 200
+# 无 token 时应 401;WREN_VIEWER_TOKEN 未设 + 未开 bypass 时应 503(fail closed)
+open "http://localhost:8002/?token=$WREN_VIEWER_TOKEN"
 
 # 4. 看进程
 ps aux | grep 'ssh -fN -L 8002' | grep -v grep

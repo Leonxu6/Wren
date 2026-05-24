@@ -18,13 +18,22 @@ long-poll + 内存锁(per-chat)+ 内存 debounce + 进程内 JobQueue → **只�
 **勿** `docker compose up --scale bot=2`(双实例会争抢 getUpdates + 竞写同一用户目录)。50–200 用户单台足够。
 
 ## 3. 备份 + 恢复(命脉 · D3.4)
-丢 `data/` = 丢掉所有人挨来的关系。**备份是头号安全网。**
+丢 `data/` = 丢掉所有人挣来的关系。**备份是头号安全网。异地副本必须加密**(#36):
+data/users 含原始聊天 / inner voice / chat_id 目录名,明文 .tgz 离机违反"内容不出机器"。
 ```bash
-# 每晚备份 + 异地(cron):
-30 3 * * *  WREN_APP_DIR=/srv/wren WREN_BACKUP_DIR=/srv/wren-backups /srv/wren/scripts/backup.sh
-# 异地:再 rsync /srv/wren-backups 到对象存储/另一台机。
-# 恢复演练(务必真跑一次再上线):
-scripts/restore.sh /srv/wren-backups/wren-<TS>.tgz /tmp/restore-check
+# 每晚备份(cron;passphrase 走 env 不进 process args,防 ps 偷):
+30 3 * * *  WREN_BACKUP_PASSPHRASE=<random-pass> WREN_APP_DIR=/srv/wren \
+            WREN_BACKUP_DIR=/srv/wren-backups /srv/wren/scripts/backup.sh --encrypt
+# (产物 wren-<TS>.tgz.age,openssl AES-256-CBC + PBKDF2;passphrase 写 cron 的 env 文件)
+
+# 异地副本:**只 rsync .tgz.age 后缀**,绝不 cp 明文 .tgz
+30 4 * * *  rsync -avz --include='wren-*.tgz.age' --exclude='*' \
+            /srv/wren-backups/ <offsite>:/path/
+
+# 恢复演练(加密 .tgz.age):openssl 解密 → staging restore(不碰 live)
+openssl enc -d -aes-256-cbc -pbkdf2 -pass env:WREN_BACKUP_PASSPHRASE \
+  -in /srv/wren-backups/wren-<TS>.tgz.age -out /tmp/wren-<TS>.tgz
+scripts/restore.sh /tmp/wren-<TS>.tgz --staging /tmp/restore-check && rm /tmp/wren-<TS>.tgz
 diff -r /srv/wren/data /tmp/restore-check/data && echo OK
 ```
 
@@ -47,14 +56,23 @@ uv tool install datasette && datasette serve data/metrics.duckdb --host 127.0.0.
 ### 5.1 W8 运维平台 `wren-view`(推荐主入口)
 viewer 容器(`network_mode: host`, bind `127.0.0.1:8002`)合并了健康总览 + 用户列表 + 单用户时间线(每轮内心独白 + 夜结算重写):
 ```bash
-# 本机起 SSH 隧道一次性映射 viewer:
+# 0)【生产必设】.env 加 viewer 认证 token(#45):
+#    WREN_VIEWER_TOKEN=$(openssl rand -hex 32)
+#    本机/CI 演示不需要 token:WREN_ALLOW_VIEWER_NO_AUTH=1
+
+# 1) 本机起 SSH 隧道一次性映射 viewer:
 ssh -fN -L 8002:127.0.0.1:8002 -p <SSH_PORT> root@<VPS_IP>
-open http://localhost:8002   # / 健康总览 · /users 用户列表 · /u/<chat_id> 单用户时间线
+
+# 2) 浏览器首次访问带 ?token=(后续导航自动 cookie session,无需再带):
+open "http://localhost:8002/?token=<WREN_VIEWER_TOKEN>"
+
+# 3) curl 走 Authorization: Bearer:
+curl -H "Authorization: Bearer <WREN_VIEWER_TOKEN>" http://localhost:8002/api/users
 
 # 用完关掉隧道(可选):
 pkill -f "ssh -fN -L 8002"
 ```
-**隐私铁律守住**: viewer 通过 `before_request` 中间件硬限 `request.remote_addr ∈ {127.0.0.1, ::1}`;命令行传 `--host 0.0.0.0` 也被强制改回 127.0.0.1。原文仅在本机渲染,不进库不出机。
+**隐私铁律守住(双层防御 #45)**: viewer `before_request` (a) 硬限 `request.remote_addr ∈ {127.0.0.1, ::1}` (b) 校验 `WREN_VIEWER_TOKEN`(`Authorization: Bearer` / `?token=` / cookie 任一);缺 token + 未开 `WREN_ALLOW_VIEWER_NO_AUTH=1` → 503 fail closed。原文仅在本机渲染,不进库不出机。
 闭环详见 [OBSERVABILITY](OBSERVABILITY.md):看板发现 → diagnose / viewer 看每轮内心 → 改 step1/persona → 重跑 aliveness+multiturn → 信号回落。
 
 ## 6. 环境变量速查

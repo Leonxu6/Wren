@@ -38,26 +38,45 @@ def active_chat_ids() -> list[str]:
     return [p.name for p in sorted(root.iterdir()) if p.is_dir()]
 
 
+async def _settle_one_locked(cid: int, chat_id: str, model: ChatModel) -> int:
+    """单个用户的 settlement:在 `_chat_lock(cid)` 内跑,与 on_message / proactive 串行(#12)。
+
+    若 live turn 正在同 chat 处理(持有同一把锁),settlement 会等到 lock 释放才进;
+    避免读 impressions 后 → live turn 追加新 impression → settle clear 把新的也清掉的竞态。
+
+    返回 1 if 真跑了 settle,0 if 不存在/未到结算窗口/失败。"""
+    try:
+        store = UserStore(chat_id)
+        if not store.exists():
+            return 0
+        async with _chat_lock(cid):
+            outcome = await asyncio.to_thread(settle_nightly, store, model)
+    except Exception as e:  # noqa: BLE001 — 批处理鲁棒性优先(单用户失败不拖垮整批)
+        print(f"[settle] {chat_id} 失败:{e}", flush=True)
+        return 0
+    if outcome.ran:
+        print(
+            f"[settle] {chat_id}: lv {outcome.before.level}→{outcome.after.level} · "
+            f"freeze {outcome.before.freeze}→{outcome.after.freeze}",
+            flush=True,
+        )
+        return 1
+    return 0
+
+
 async def settle_all(_context: Any = None) -> int:
-    """对所有活跃用户跑一次结算;单个用户失败不拖垮整批。返回实际结算的人数。"""
+    """对所有活跃用户跑一次结算;单个用户失败不拖垮整批。返回实际结算的人数。
+
+    每个用户走 `_chat_lock(cid)`(与 on_message / proactive 共享同一把锁),避免与
+    live turn 在结算窗口附近争 impressions(#12)。non-numeric 目录跳过——锁 key 是 int。"""
     model = get_model("settlement")
     ran = 0
     for chat_id in active_chat_ids():
         try:
-            store = UserStore(chat_id)
-            if not store.exists():
-                continue
-            outcome = await asyncio.to_thread(settle_nightly, store, model)
-        except Exception as e:  # noqa: BLE001 — 批处理鲁棒性优先
-            print(f"[settle] {chat_id} 失败:{e}", flush=True)
-            continue
-        if outcome.ran:
-            ran += 1
-            print(
-                f"[settle] {chat_id}: lv {outcome.before.level}→{outcome.after.level} · "
-                f"freeze {outcome.before.freeze}→{outcome.after.freeze}",
-                flush=True,
-            )
+            cid = int(chat_id)
+        except ValueError:
+            continue  # 与 proactive_tick 一致:只对数字 chat_id 上锁
+        ran += await _settle_one_locked(cid, chat_id, model)
     return ran
 
 
@@ -126,7 +145,8 @@ async def proactive_tick(
             store = UserStore(chat_id)
             if not store.exists():
                 continue
-            # 护栏:用户正在对话(pending debounce)/ 最近有过 trace → 让路,别插嘴
+            # 护栏 1(pre-lock 快筛):用户正在对话 / 最近活跃 → 跳过整个 chat,
+            # 省下进 lock + 重新 read store 的开销
             if jq is not None and jq.get_jobs_by_name(f"debounce-{chat_id}"):
                 continue
             if _recently_active(store, now):
@@ -138,16 +158,36 @@ async def proactive_tick(
             beat = decision.beat
             if beat is None:
                 continue
-            if turn_blocked():  # 成本天花板:主动消息也计入(优先级低于反应轮)
-                break
-            async with _chat_lock(cid):  # 与 on_message 串行,气泡不交错
+            # 护栏 2(inside-lock 再确认,#49):pre-lock 检查与 lock 获取之间,
+            # 若 reactive turn 抢先持锁 + 触新 debounce job + 写 trace → 此时
+            # **同 chat 实际正在对话**,proactive 还按 stale 状态发就是"插嘴"。
+            # 进锁后重新 read store + jq,任一新护栏 fire → 退出,不发不 mark/不 bump cap。
+            async with _chat_lock(cid):
+                if jq is not None and jq.get_jobs_by_name(f"debounce-{chat_id}"):
+                    continue  # reactive turn 刚进 debounce → 让路
+                fresh_now = clk.now()
+                if _recently_active(store, fresh_now):
+                    continue  # reactive turn 刚 flush 写了 trace → 让路
+                # 重读 proactive_state + relationship + 重判 due beat(都可能在 gap 中变)
+                fresh_level = store.read_relationship().level
+                fresh_decision = scan_for_due_beat(
+                    fresh_now, beats, fresh_level,
+                    store.read_proactive_state(), tier=store.read_tier(),
+                )
+                if fresh_decision.beat is None:
+                    continue  # gap 中 beat 已被别的路径 mark 或 budget 用尽
+                # cost cap(#49 reviewer 指出):必须在所有 inside-lock skip 路径**之后**才 bump,
+                # 否则 race-skip 也会消耗每日 cap,虽然没发气泡/没写 trace。
+                if turn_blocked():
+                    break
+                beat = fresh_decision.beat
                 outcome = await asyncio.to_thread(
                     handle_proactive_turn, chat_id, beat, store, s1, s2, clock=clk, world=world
                 )
-                store.mark_considered(now, beat_fingerprint(beat))
+                store.mark_considered(fresh_now, beat_fingerprint(beat))
                 _log_turn(cid, f"[proactive] {beat.intent}", outcome)
                 if outcome.replied and outcome.bubbles:
-                    store.bump_proactive_count(now)
+                    store.bump_proactive_count(fresh_now)
                     await send_bubbles(
                         context.bot, cid, outcome.bubbles, outcome.typing_ms, outcome.bubble_gaps_ms
                     )
