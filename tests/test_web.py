@@ -350,3 +350,188 @@ def test_w81_tojson_pretty_filter() -> None:
     assert "\n" in pretty  # 多行
     # 非 JSON 原样返回
     assert web._tojson_pretty("not json") == "not json"
+
+
+# === #45:viewer token 认证(SSH 隧道 + 同机进程也需要 credential)===
+
+
+def test_viewer_returns_503_when_no_token_and_no_bypass(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """fail closed:WREN_VIEWER_TOKEN 未配 + dev bypass 未开 → 503,
+    防 silent unauthenticated 暴露 raw trace。"""
+    monkeypatch.delenv("WREN_ALLOW_VIEWER_NO_AUTH", raising=False)
+    monkeypatch.delenv("WREN_VIEWER_TOKEN", raising=False)
+    resp = client.get("/api/users", environ_overrides={"REMOTE_ADDR": "127.0.0.1"})
+    assert resp.status_code == 503
+    assert b"WREN_VIEWER_TOKEN" in resp.data
+
+
+def test_viewer_returns_401_when_missing_token(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """配了 token 但请求不带 → 401。"""
+    monkeypatch.delenv("WREN_ALLOW_VIEWER_NO_AUTH", raising=False)
+    monkeypatch.setenv("WREN_VIEWER_TOKEN", "secret-xyz")
+    resp = client.get("/api/users", environ_overrides={"REMOTE_ADDR": "127.0.0.1"})
+    assert resp.status_code == 401
+
+
+def test_viewer_returns_401_when_wrong_token(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """配了 token 但请求带错的 → 401(用 hmac.compare_digest 防 timing attack)。"""
+    monkeypatch.delenv("WREN_ALLOW_VIEWER_NO_AUTH", raising=False)
+    monkeypatch.setenv("WREN_VIEWER_TOKEN", "secret-xyz")
+    resp = client.get(
+        "/api/users",
+        environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+        headers={"Authorization": "Bearer wrong-token"},
+    )
+    assert resp.status_code == 401
+
+
+def test_viewer_allows_correct_token_via_authorization_header(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Authorization: Bearer <token> 匹配 → 200。"""
+    monkeypatch.delenv("WREN_ALLOW_VIEWER_NO_AUTH", raising=False)
+    monkeypatch.setenv("WREN_VIEWER_TOKEN", "secret-xyz")
+    resp = client.get(
+        "/api/users",
+        environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+        headers={"Authorization": "Bearer secret-xyz"},
+    )
+    assert resp.status_code == 200
+
+
+def test_viewer_allows_correct_token_via_query(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """?token=<token> 匹配 → 200(SSH 隧道 + browser 直接访问的简便路径)。"""
+    monkeypatch.delenv("WREN_ALLOW_VIEWER_NO_AUTH", raising=False)
+    monkeypatch.setenv("WREN_VIEWER_TOKEN", "secret-xyz")
+    resp = client.get(
+        "/api/users?token=secret-xyz",
+        environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+    )
+    assert resp.status_code == 200
+
+
+def test_remote_addr_check_runs_before_auth(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """defense in depth:非 localhost + 有 token → 仍 403(layer 1 优先于 layer 2)。
+    防 token 被泄但攻击者从外部访问能进。"""
+    monkeypatch.delenv("WREN_ALLOW_VIEWER_NO_AUTH", raising=False)
+    monkeypatch.setenv("WREN_VIEWER_TOKEN", "secret-xyz")
+    resp = client.get(
+        "/api/users",
+        environ_overrides={"REMOTE_ADDR": "10.0.0.1"},
+        headers={"Authorization": "Bearer secret-xyz"},
+    )
+    assert resp.status_code == 403
+
+
+def test_viewer_full_trace_endpoint_also_gated(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """关键:/api/u/<chat_id> 返完整 raw trace + inner voice,**绝不能** 无 auth 可读。"""
+    monkeypatch.delenv("WREN_ALLOW_VIEWER_NO_AUTH", raising=False)
+    monkeypatch.setenv("WREN_VIEWER_TOKEN", "secret-xyz")
+    resp = client.get(
+        "/api/u/11111",
+        environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+    )
+    assert resp.status_code == 401
+    # 有 token → 200
+    resp_ok = client.get(
+        "/api/u/11111",
+        environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+        headers={"Authorization": "Bearer secret-xyz"},
+    )
+    assert resp_ok.status_code == 200
+    # 验证内容确实是 raw trace(防 silently degrade 到啥都不返)
+    j = resp_ok.get_json()
+    assert "traces" in j
+
+
+# === #45 PR review followup:cookie session 让浏览器导航不丢 token ===
+
+
+def test_browser_first_visit_sets_session_cookie(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """浏览器首次带 `?token=` 验过 → 响应 Set-Cookie wren_viewer_session,
+    HttpOnly + SameSite=Strict(防 XSS / CSRF)。"""
+    monkeypatch.delenv("WREN_ALLOW_VIEWER_NO_AUTH", raising=False)
+    monkeypatch.setenv("WREN_VIEWER_TOKEN", "secret-xyz")
+    resp = client.get(
+        "/?token=secret-xyz",
+        environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+    )
+    assert resp.status_code == 200
+    set_cookie = resp.headers.get("Set-Cookie", "")
+    assert "wren_viewer_session=secret-xyz" in set_cookie, (
+        f"应 set wren_viewer_session cookie,实际:{set_cookie}"
+    )
+    assert "HttpOnly" in set_cookie, "cookie 必须 HttpOnly 防 XSS"
+    assert "SameSite=Strict" in set_cookie, "cookie 必须 SameSite=Strict 防 CSRF"
+
+
+def test_browser_nav_after_cookie_set_works_without_query(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**核心**:cookie set 后,点 `/users` 等内部链接(无 `?token=`)仍能访问 200。
+    这是 reviewer 指出 base.html 用绝对 `href="/users"` 导致 token 丢失的真正 fix。"""
+    monkeypatch.delenv("WREN_ALLOW_VIEWER_NO_AUTH", raising=False)
+    monkeypatch.setenv("WREN_VIEWER_TOKEN", "secret-xyz")
+
+    # 步 1:首次访问带 ?token,触发 Set-Cookie
+    resp1 = client.get(
+        "/?token=secret-xyz",
+        environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+    )
+    assert resp1.status_code == 200
+
+    # 步 2:模拟浏览器点导航 → /users,不带 ?token(cookie 由 Flask test_client 自动续上)
+    resp2 = client.get(
+        "/users",
+        environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+    )
+    assert resp2.status_code == 200, (
+        f"浏览器导航后(cookie 已 set)访问 /users 应 200,实际 {resp2.status_code}"
+    )
+
+    # 步 3:其他敏感路径同样可访问
+    resp3 = client.get(
+        "/api/users",
+        environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+    )
+    assert resp3.status_code == 200
+
+
+def test_invalid_cookie_value_still_returns_401(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """攻击者手伪造 cookie 值(没拿真 token)→ 仍 401,不绕过 auth。"""
+    monkeypatch.delenv("WREN_ALLOW_VIEWER_NO_AUTH", raising=False)
+    monkeypatch.setenv("WREN_VIEWER_TOKEN", "secret-xyz")
+    client.set_cookie("wren_viewer_session", "fake-cookie-value")
+    resp = client.get("/api/users", environ_overrides={"REMOTE_ADDR": "127.0.0.1"})
+    assert resp.status_code == 401
+
+
+def test_authorization_header_also_sets_cookie(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """带 `Authorization: Bearer` 验过也 set cookie(虽然 curl 不需要,但 fetch() 浏览器 JS 走 header 时也该免重复 token)。"""
+    monkeypatch.delenv("WREN_ALLOW_VIEWER_NO_AUTH", raising=False)
+    monkeypatch.setenv("WREN_VIEWER_TOKEN", "secret-xyz")
+    resp = client.get(
+        "/api/users",
+        environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+        headers={"Authorization": "Bearer secret-xyz"},
+    )
+    assert resp.status_code == 200
+    assert "wren_viewer_session=secret-xyz" in resp.headers.get("Set-Cookie", "")

@@ -92,15 +92,18 @@
 
 8 页运维平台，浅色 admin 风格 + echarts 图表 + 聊天泡泡 + 完整 trace。**只读**（不会改生产数据）。
 
-### 起隧道 + 打开
+### 起隧道 + 打开(生产必带 token,#45)
 ```bash
-# 一次性后台起隧道
+# 1) 一次性后台起隧道
 ssh -fN -L 8002:127.0.0.1:8002 -p 62769 root@104.233.146.220
-open http://localhost:8002
+
+# 2) 浏览器首次带 ?token,后续点 /users / /u/<chat_id> 自动走 cookie session
+open "http://localhost:8002/?token=$WREN_VIEWER_TOKEN"
 
 # 用完关
 pkill -f "ssh -fN -L 8002"
 ```
+(curl 用 `Authorization: Bearer $WREN_VIEWER_TOKEN`;生产无 token 时 viewer 启动会 503 fail closed。)
 
 ### 8 页都看什么
 
@@ -278,9 +281,11 @@ ssh -p 62769 root@104.233.146.220 'cd /srv/wren && docker compose ps viewer'
 # 2. 重新起本机 SSH 隧道(后台 -fN,跑一次即可)
 ssh -fN -L 8002:127.0.0.1:8002 -p 62769 root@104.233.146.220
 
-# 3. 验证
-curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8002/   # 应 200
-open http://localhost:8002
+# 3. 验证(生产带 WREN_VIEWER_TOKEN 必须用 Authorization Header 或 ?token;#45)
+curl -s -o /dev/null -w "%{http_code}\n" \
+  -H "Authorization: Bearer $WREN_VIEWER_TOKEN" http://localhost:8002/   # 应 200
+# 无 token 时应 401;WREN_VIEWER_TOKEN 未设 + 未开 bypass 时应 503(fail closed)
+open "http://localhost:8002/?token=$WREN_VIEWER_TOKEN"
 
 # 4. 看进程
 ps aux | grep 'ssh -fN -L 8002' | grep -v grep
