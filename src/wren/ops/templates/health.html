@@ -27,8 +27,8 @@
     <div class="spark" id="spark-lv2"></div>
   </div>
   <div class="kpi-card">
-    <div class="label">今日 cost</div>
-    <div class="value">${{ (h.today.cost_usd or 0) }}<span class="unit">USD</span></div>
+    <div class="label">今日 turn 数</div>
+    <div class="value">{{ (h.today.turn_count or 0) }}</div>
     {% if h.daily_cap.cap and h.daily_cap.cap > 0 %}
       <div class="sub-value">DAILY_CAP {{ h.daily_cap.used }} / {{ h.daily_cap.cap }} ({{ h.daily_cap.pct }}%)</div>
       <div class="progress"><div class="fill" style="width: {{ [h.daily_cap.pct or 0, 100]|min }}%"></div></div>
