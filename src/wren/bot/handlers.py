@@ -102,10 +102,28 @@ async def cmd_help(update: Any, context: Any) -> None:
 
 
 async def cmd_delete(update: Any, context: Any) -> None:
-    UserStore(str(update.effective_chat.id)).delete()
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id, text=static_copy.DELETE_CONFIRM
-    )
+    """Wipe everything for this chat:停 pending → 取锁 → 清 buffer → 删目录 → 回执(#34)。
+
+    顺序很重要:
+    1. **先**取消同 chat 的 debounce job(否则 in-flight `_handle_and_send` 在
+       `store.init_user()` 时会**重建**刚被删的目录)
+    2. **再**进 `_chat_lock(chat_id)`,等任何 in-flight turn 跑完才动手(避免
+       在它写一半时被打断 → 留下半状态)
+    3. 锁内清 buffer + delete + 回执(确认时数据已真没了)
+    """
+    chat_id = update.effective_chat.id
+    # 1) 取消 pending debounce job(避免 confirmation 后旧 buffer 被 flush 成 turn)
+    if getattr(context, "job_queue", None):
+        for job in context.job_queue.get_jobs_by_name(f"debounce-{chat_id}"):
+            job.schedule_removal()
+    # 2) 进锁:in-flight turn 跑完才动;新 turn 也会等(同一把锁)
+    async with _chat_lock(chat_id):
+        # 3) 锁内清 buffer(旧消息不该再被 flush 成 turn)
+        if hasattr(context, "chat_data"):
+            context.chat_data["buffer"] = []
+        # 4) 真删 → 再回执(确认时一定真没了,符合 "wipe everything")
+        UserStore(str(chat_id)).delete()
+        await context.bot.send_message(chat_id=chat_id, text=static_copy.DELETE_CONFIRM)
 
 
 # 调试命令(仅测试):手动设关系等级,立刻看不同 level 的暖度差异 —— 关系进阶/Phase 6 未接前的临时手段。

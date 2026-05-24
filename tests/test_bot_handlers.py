@@ -75,5 +75,59 @@ async def test_delete_command_wipes(data_root: Path) -> None:
     update.effective_chat.id = 777
     context = MagicMock()
     context.bot.send_message = AsyncMock()
+    context.job_queue.get_jobs_by_name = MagicMock(return_value=[])
+    context.chat_data = {}
     await cmd_delete(update, context)
     assert not UserStore("777", data_root).dir.exists()
+
+
+async def test_delete_cancels_pending_debounce_job(data_root: Path) -> None:
+    """#34:cmd_delete 必须先取消同 chat 的 debounce job —— 否则旧 buffer 会被 flush
+    成新 turn,在 store.init_user() 时**重建**刚被删的目录,wipe 失败。"""
+    UserStore("888", data_root).init_user()
+    update = MagicMock()
+    update.effective_chat.id = 888
+    context = MagicMock()
+    context.bot.send_message = AsyncMock()
+    fake_job = MagicMock()
+    fake_job.schedule_removal = MagicMock()
+    context.job_queue.get_jobs_by_name = MagicMock(return_value=[fake_job])
+    context.chat_data = {"buffer": ["old message that should not survive"]}
+
+    await cmd_delete(update, context)
+
+    context.job_queue.get_jobs_by_name.assert_called_with("debounce-888")
+    fake_job.schedule_removal.assert_called_once()
+    assert context.chat_data["buffer"] == []  # 旧消息清掉
+    assert not UserStore("888", data_root).dir.exists()
+
+
+async def test_delete_holds_chat_lock_until_done(data_root: Path) -> None:
+    """#34:cmd_delete 必须进 `_chat_lock(chat_id)`,与 in-flight turn 串行。
+    否则 in-flight `_handle_and_send` 的 `store.init_user()` 会与 delete 同跑,
+    产生半状态(目录被删 + trace 又被写)。"""
+    import asyncio
+
+    from wren.bot.handlers import _chat_lock
+
+    UserStore("999", data_root).init_user()
+    update = MagicMock()
+    update.effective_chat.id = 999
+    context = MagicMock()
+    context.bot.send_message = AsyncMock()
+    context.job_queue.get_jobs_by_name = MagicMock(return_value=[])
+    context.chat_data = {}
+
+    lock = _chat_lock(999)
+    async with lock:
+        # in-flight turn 抢先持锁;启动 cmd_delete 应被阻塞
+        task = asyncio.create_task(cmd_delete(update, context))
+        await asyncio.sleep(0.05)
+        assert not task.done(), "cmd_delete 应被 _chat_lock 阻塞(#34 race)"
+        assert UserStore("999", data_root).dir.exists(), "锁释放前不该删"
+        assert context.bot.send_message.call_count == 0, "锁释放前不该发 confirmation"
+
+    # 锁释放 → cmd_delete 应完成
+    await asyncio.wait_for(task, timeout=2.0)
+    assert not UserStore("999", data_root).dir.exists()
+    context.bot.send_message.assert_called_once()
