@@ -112,3 +112,42 @@ def test_unknown_flag_exits_nonzero(tmp_path: Path) -> None:
     assert proc.returncode == 2
     assert "未知参数" in proc.stderr
     assert not list(dest.glob("wren-*")), "fail 时不该留下任何产物"
+
+
+def test_runbook_offsite_rsync_only_matches_encrypted_artifact() -> None:
+    """#36 PR review followup:RUNBOOK 的 offsite rsync 必须**只匹配 .tgz.age**,
+    不能含让明文 .tgz 离机的 pattern。"""
+    runbook = (_repo_root() / "docs" / "RUNBOOK.md").read_text()
+    # 必须 include 加密产物
+    assert "wren-*.tgz.age" in runbook, (
+        "RUNBOOK offsite rsync 应 include 加密 wren-*.tgz.age(#36)"
+    )
+    # 整段(找含 rsync /srv/wren-backups 的行)不应不带 --include 限制
+    # 简单 heuristic:含 rsync /srv/wren-backups 但同行没 .tgz.age 限制 = 危险
+    for line in runbook.splitlines():
+        if "rsync" in line and "wren-backups" in line:
+            assert ".tgz.age" in line or "--include=" in line, (
+                f"RUNBOOK 含无限制的 offsite rsync:`{line.strip()}`(#36)"
+            )
+
+
+def test_runbook_cron_backup_uses_encrypt_flag() -> None:
+    """#36 PR review followup:RUNBOOK 的 cron 命令必须用 --encrypt,
+    不能裸跑 backup.sh 输出明文 .tgz 再 offsite。"""
+    runbook = (_repo_root() / "docs" / "RUNBOOK.md").read_text()
+    # 找含 backup.sh 的 cron line
+    for line in runbook.splitlines():
+        if "backup.sh" in line and "* * *" in line:
+            assert "--encrypt" in line, (
+                f"RUNBOOK cron 命令必须带 --encrypt(#36):`{line.strip()}`"
+            )
+
+
+def test_maintenance_acknowledges_encrypted_backup_artifacts() -> None:
+    """#36 PR review followup:MAINTENANCE 描述备份目录时必须提 .tgz.age 加密产物。"""
+    maint = (_repo_root() / "MAINTENANCE.md").read_text()
+    assert "wren-backups/" in maint
+    # 描述备份目录的段落附近必须出现 .tgz.age
+    assert "tgz.age" in maint, (
+        "MAINTENANCE 描述 wren-backups/ 时未提加密 .tgz.age 产物(#36)"
+    )
