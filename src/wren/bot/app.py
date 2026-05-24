@@ -60,9 +60,28 @@ def build_application(token: str | None = None) -> Any:
     return app
 
 
+def require_real_api_key_unless_fake() -> None:
+    """生产 bot 入口 fail fast:无 WREN_API_KEY 且未显式 WREN_FAKE_MODEL=1 → raise(#21)。
+
+    避免 `.env` 漏填 / 部署变量丢失时 bot 静默退化到 fake 模式 ——
+    会显示"启动成功 + 调度已挂"的假阳信号,而真实对话全沉默,排查成本高。
+    本地演示 / 离线请显式 `WREN_FAKE_MODEL=1`(复用现有离线开关,不引入新 flag)。
+    """
+    if config.has_api_key():
+        return
+    if config.force_fake():
+        print("⚠️  WREN_FAKE_MODEL=1 → bot 走 fake(本地/离线模式)。生产绝不该看到这行。",
+              flush=True)
+        return
+    raise RuntimeError(
+        "WREN_API_KEY 未设。生产 bot 必须有真实 key(.env 或 env);"
+        "本地演示 / 离线请显式 WREN_FAKE_MODEL=1。"
+        "见 #21、README、docs/RUNBOOK。"
+    )
+
+
 def main() -> None:
-    if not config.has_api_key():
-        print("⚠️  无 WREN_API_KEY:Wren 将无话可说(模型走 fake)。先在 .env 配 key。")
+    require_real_api_key_unless_fake()
     app = build_application()
     print("Wren bot 启动(polling)… Ctrl-C 退出。")
     app.run_polling()
