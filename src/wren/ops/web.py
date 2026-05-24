@@ -135,18 +135,34 @@ def _user_list() -> list[dict[str, Any]]:
     return out
 
 
+SESSION_COOKIE = "wren_viewer_session"
+
+
+def _extract_request_token() -> str:
+    """从 Authorization / ?token= / cookie 拿 token(顺序无所谓,任一匹配即可)。"""
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return auth[7:].strip()
+    qt = request.args.get("token", "").strip()
+    if qt:
+        return qt
+    return request.cookies.get(SESSION_COOKIE, "").strip()
+
+
 def _require_viewer_auth() -> None:
-    """Layer 2 防御(#45):viewer 必须显式 token 才能读 raw trace / settlement。
+    """Layer 2 防御(#45):viewer 必须显式 token。
 
     localhost 绑定只防外部访问;同机任何进程(浏览器扩展、curl、本地网页)都能直
     达 127.0.0.1:8002 → 仍能 dump raw 用户对话。token 让数据面真正"需要 credential"。
 
     解析顺序:
-    1. `WREN_ALLOW_VIEWER_NO_AUTH=1` → 跳过(只给 dev / 测试 / 本地演示用,**生产绝不开**)
-    2. `WREN_VIEWER_TOKEN` 未设 → 503(fail closed,防 silent unauthenticated)
-    3. 请求带 `Authorization: Bearer <token>` 或 `?token=<token>` → 比对
-    4. 不匹配 → 401
+    1. `WREN_ALLOW_VIEWER_NO_AUTH=1` → 跳过(dev / 测试 / 本地演示;**生产绝不开**)
+    2. `WREN_VIEWER_TOKEN` 未设 → 503(fail closed)
+    3. 请求带 token(Authorization: Bearer / ?token= / cookie)→ 比对
+    4. 不匹配或缺 → 401
 
+    Cookie(`wren_viewer_session`)在浏览器首次 `?token=` 通过后由 after_request 自动 set,
+    后续导航(点 `/users` / `/u/<chat_id>`)无需带 query,#45 reviewer 指出 fix。
     用 `hmac.compare_digest` 防 timing attack。
     """
     if os.getenv("WREN_ALLOW_VIEWER_NO_AUTH", "").strip() == "1":
@@ -155,12 +171,7 @@ def _require_viewer_auth() -> None:
     if not expected:
         abort(503, "WREN_VIEWER_TOKEN 未配置(见 #45 / RUNBOOK);"
                    "本地/测试请显式 WREN_ALLOW_VIEWER_NO_AUTH=1")
-    got = ""
-    auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        got = auth[7:].strip()
-    if not got:
-        got = request.args.get("token", "").strip()
+    got = _extract_request_token()
     if not got:
         abort(401, "需要 Authorization: Bearer <token> 或 ?token=<token>")
     if not hmac.compare_digest(got, expected):
@@ -170,11 +181,39 @@ def _require_viewer_auth() -> None:
 @app.before_request
 def _localhost_only() -> Any:
     """Layer 1:硬限 remote_addr ∈ {127.0.0.1, ::1};即使 bind 误改 0.0.0.0 也兜底。
-    Layer 2:viewer token 认证(#45)—— SSH 隧道 + 同机进程也需要 credential。"""
+    Layer 2:viewer token 认证(#45)。"""
     if request.remote_addr not in ("127.0.0.1", "::1"):
         abort(403, "localhost only (SSH 隧道访问)")
     _require_viewer_auth()
     return None
+
+
+@app.after_request
+def _maybe_set_session_cookie(response: Any) -> Any:
+    """浏览器首次带 `?token=` / `Authorization` 通过 → set session cookie,
+    后续点 `/users` / `/u/<chat_id>` 等内部链接无需再带 query(#45 reviewer 修)。
+
+    HttpOnly:JS 拿不到,防 XSS 偷;SameSite=Strict:防 CSRF;
+    不设 Secure(viewer 本来就 http://localhost,Secure=True 会让本地 set 失败)。
+    Bypass / 缺 token / 401 路径都不会到这(before_request abort 已 short-circuit)。
+    """
+    if os.getenv("WREN_ALLOW_VIEWER_NO_AUTH", "").strip() == "1":
+        return response
+    expected = os.getenv("WREN_VIEWER_TOKEN", "").strip()
+    if not expected:
+        return response
+    cookie_token = request.cookies.get(SESSION_COOKIE, "").strip()
+    if cookie_token and hmac.compare_digest(cookie_token, expected):
+        return response  # 已有有效 cookie,no-op
+    # 这次请求是通过 header 或 query 验过的 → set cookie 让浏览器后续免 token
+    auth = request.headers.get("Authorization", "")
+    new_token = auth[7:].strip() if auth.startswith("Bearer ") else request.args.get("token", "").strip()
+    if new_token and hmac.compare_digest(new_token, expected):
+        response.set_cookie(
+            SESSION_COOKIE, new_token,
+            httponly=True, samesite="Strict",
+        )
+    return response
 
 
 # --- HTML 页面 ---
