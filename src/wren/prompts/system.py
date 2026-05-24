@@ -8,6 +8,9 @@ from functools import lru_cache
 from .. import config
 from ..model.base import ChatMessage
 
+_MAX_BUBBLES = 8
+_MAX_BUBBLE_CHARS = 4096
+
 # 反谄媚两轴 + §3 红线 + AI 披露 —— prompt 层硬立(EVAL_spec §3「prompt 含义」)。
 _DIRECTIVES = """\
 [NON-NEGOTIABLE — how you relate to whoever is texting you]
@@ -116,7 +119,18 @@ def parse_bubbles(text: str) -> list[str]:
     except json.JSONDecodeError:
         return []  # malformed → silence(pipeline 走 fail-closed 路径)
     if isinstance(data, dict) and isinstance(data.get("messages"), list):
-        return [str(m).strip() for m in data["messages"] if str(m).strip()]
+        bubbles = [str(m).strip() for m in data["messages"] if str(m).strip()]
+        return _bounded_bubbles(bubbles)
     if isinstance(data, list):
-        return [str(m).strip() for m in data if str(m).strip()]
+        bubbles = [str(m).strip() for m in data if str(m).strip()]
+        return _bounded_bubbles(bubbles)
     return []  # JSON 合法但 schema 不对(不是 dict.messages 也不是 list)→ silence
+
+
+def _bounded_bubbles(bubbles: list[str]) -> list[str]:
+    """#48:Telegram delivery is all-or-silence for unsafe bubble payloads."""
+    if len(bubbles) > _MAX_BUBBLES:
+        return []
+    if any(len(b) > _MAX_BUBBLE_CHARS for b in bubbles):
+        return []
+    return bubbles

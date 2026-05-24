@@ -28,6 +28,42 @@ class TurnOutcome:
     trace: TurnTrace
 
 
+def persist_delivered_reply(store: UserStore, outcome: TurnOutcome) -> None:
+    """Persist Wren's visible reply only after the transport confirms delivery."""
+    if not outcome.replied or not outcome.bubbles:
+        return
+    store.append_dialogue("wren", " / ".join(outcome.bubbles))
+    write_trace(store.dir, outcome.trace)
+
+
+def write_delivery_failure_trace(
+    store: UserStore, outcome: TurnOutcome, error: Exception
+) -> TurnTrace:
+    """Record generated-but-not-delivered output without marking it as sent."""
+    step2 = dict(outcome.trace.step2 or {})
+    step2.update(
+        {
+            "delivery_failed": True,
+            "delivery_error": str(error),
+            "delivery_error_type": type(error).__name__,
+        }
+    )
+    trace = TurnTrace(
+        outcome.trace.turn_id,
+        outcome.trace.chat_id,
+        outcome.trace.ts,
+        outcome.trace.user_turn,
+        outcome.trace.relationship,
+        outcome.trace.step1,
+        step2,
+        sent=None,
+        eval=outcome.trace.eval,
+        kind=outcome.trace.kind,
+    )
+    write_trace(store.dir, trace)
+    return trace
+
+
 def compute_pacing(bubbles: list[str]) -> tuple[int, list[int]]:
     """据气泡长度算 typing 时长 + 气泡间隔(确定性,便于测试与 trace 复盘)。"""
     if not bubbles:
@@ -91,6 +127,7 @@ def handle_turn(
     *,
     clock: Clock | None = None,
     world: str = "",
+    persist_reply: bool = True,
 ) -> TurnOutcome:
     clock = clock or SystemClock()
     # 她此刻在自己这天的哪儿(本地墙钟时刻)。world(今日 life skeleton)由 caller 经
@@ -173,7 +210,6 @@ def handle_turn(
         )
         return TurnOutcome(False, [], s1.delay_s, 0, [], trace)
 
-    store.append_dialogue("wren", " / ".join(s2.bubbles))
     typing_ms, gaps = compute_pacing(s2.bubbles)
     step2_dict = {
         "prompt": {
@@ -188,8 +224,10 @@ def handle_turn(
     }
     sent_dict = {"bubbles": s2.bubbles, "typing_ms": typing_ms, "bubble_gaps_ms": gaps}
     trace = TurnTrace(turn_id, chat_id, ts, user_text, rel, step1_dict, step2_dict, sent_dict)
-    write_trace(store.dir, trace)
-    return TurnOutcome(True, s2.bubbles, s1.delay_s, typing_ms, gaps, trace)
+    outcome = TurnOutcome(True, s2.bubbles, s1.delay_s, typing_ms, gaps, trace)
+    if persist_reply:
+        persist_delivered_reply(store, outcome)
+    return outcome
 
 
 def handle_proactive_turn(
@@ -201,6 +239,7 @@ def handle_proactive_turn(
     *,
     clock: Clock | None = None,
     world: str = "",
+    persist_reply: bool = True,
 ) -> TurnOutcome:
     """到点轻判一条 beat:Step1 同形主动调用 →(压制 | Step2 起头)→ 落 trace。与 handle_turn 平行。
 
@@ -282,7 +321,6 @@ def handle_proactive_turn(
         )
         return TurnOutcome(False, [], s1.delay_s, 0, [], trace)
 
-    store.append_dialogue("wren", " / ".join(s2.bubbles))  # 进对话历史,下次反应轮接得住
     typing_ms, gaps = compute_pacing(s2.bubbles)
     step2_dict = {
         "prompt": {
@@ -297,5 +335,7 @@ def handle_proactive_turn(
     }
     sent_dict = {"bubbles": s2.bubbles, "typing_ms": typing_ms, "bubble_gaps_ms": gaps}
     trace = TurnTrace(turn_id, chat_id, ts, None, rel, step1_dict, step2_dict, sent_dict, kind="proactive")
-    write_trace(store.dir, trace)
-    return TurnOutcome(True, s2.bubbles, s1.delay_s, typing_ms, gaps, trace)
+    outcome = TurnOutcome(True, s2.bubbles, s1.delay_s, typing_ms, gaps, trace)
+    if persist_reply:
+        persist_delivered_reply(store, outcome)
+    return outcome

@@ -14,7 +14,11 @@ from zoneinfo import ZoneInfo
 from .. import config
 from ..core.clock import Clock, runtime_clock
 from ..core.life_sim import ensure_world_today
-from ..core.pipeline import handle_proactive_turn
+from ..core.pipeline import (
+    handle_proactive_turn,
+    persist_delivered_reply,
+    write_delivery_failure_trace,
+)
 from ..core.proactive import beat_fingerprint, scan_for_due_beat
 from ..core.settlement import settle_nightly
 from ..core.storage import UserStore
@@ -182,16 +186,31 @@ async def proactive_tick(
                     break
                 beat = fresh_decision.beat
                 outcome = await asyncio.to_thread(
-                    handle_proactive_turn, chat_id, beat, store, s1, s2, clock=clk, world=world
+                    handle_proactive_turn,
+                    chat_id,
+                    beat,
+                    store,
+                    s1,
+                    s2,
+                    clock=clk,
+                    world=world,
+                    persist_reply=False,
                 )
-                store.mark_considered(fresh_now, beat_fingerprint(beat))
-                _log_turn(cid, f"[proactive] {beat.intent}", outcome)
                 if outcome.replied and outcome.bubbles:
+                    try:
+                        await send_bubbles(
+                            context.bot, cid, outcome.bubbles, outcome.typing_ms, outcome.bubble_gaps_ms
+                        )
+                    except Exception as e:
+                        await asyncio.to_thread(write_delivery_failure_trace, store, outcome, e)
+                        raise
+                    await asyncio.to_thread(persist_delivered_reply, store, outcome)
+                    store.mark_considered(fresh_now, beat_fingerprint(beat))
                     store.bump_proactive_count(fresh_now)
-                    await send_bubbles(
-                        context.bot, cid, outcome.bubbles, outcome.typing_ms, outcome.bubble_gaps_ms
-                    )
                     sent += 1
+                else:
+                    store.mark_considered(fresh_now, beat_fingerprint(beat))
+                _log_turn(cid, f"[proactive] {beat.intent}", outcome)
         except Exception as e:  # noqa: BLE001 — 批处理鲁棒性优先(单用户失败不拖垮整批)
             print(f"[proactive] {chat_id} 失败:{e}", flush=True)
             continue

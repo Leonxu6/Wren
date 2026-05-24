@@ -234,6 +234,18 @@ def test_parse_bubbles_returns_empty_on_malformed_json() -> None:
     assert parse_bubbles('```json\n{"messages":["hi"]}\n```') == ["hi"]
 
 
+def test_parse_bubbles_rejects_unsafe_delivery_bounds() -> None:
+    """#48:too many / too long bubbles fail closed to silence, not partial delivery."""
+    from wren.prompts.system import parse_bubbles
+
+    assert parse_bubbles(json.dumps({"messages": [str(i) for i in range(8)]})) == [
+        str(i) for i in range(8)
+    ]
+    assert parse_bubbles(json.dumps({"messages": [str(i) for i in range(9)]})) == []
+    assert parse_bubbles(json.dumps({"messages": ["x" * 4096]})) == ["x" * 4096]
+    assert parse_bubbles(json.dumps({"messages": ["x" * 4097]})) == []
+
+
 _S2_MALFORMED = '{"messages":["hi"'  # 截断 JSON,parse_bubbles 返 []
 
 
@@ -275,3 +287,21 @@ def test_step2_plain_error_text_does_not_become_bubbles(data_root: Path) -> None
     conv = (s.dir / "conversation.md").read_text(encoding="utf-8")
     assert "Sorry" not in conv and "sorry" not in conv
     assert "wren:" not in conv
+
+
+def test_step2_too_many_bubbles_goes_silence_no_partial_send(data_root: Path) -> None:
+    """#48:unsafe bubble count routes through the same fail-closed step2 path."""
+    s = UserStore("mal3", data_root)
+    s.init_user()
+    s1 = FakeChatModel(script=[_S1_REPLY])
+    s2_many = FakeChatModel(script=[json.dumps({"messages": [str(i) for i in range(9)]})])
+
+    out = handle_turn("mal3", "hi", s, s1, s2_many)
+
+    assert not out.replied
+    assert out.bubbles == []
+    conv = (s.dir / "conversation.md").read_text(encoding="utf-8")
+    assert "wren:" not in conv
+    trace = read_traces(s.dir)[0]
+    assert trace["sent"] is None
+    assert trace["step2"]["stage"] == "step2"

@@ -14,7 +14,13 @@ from typing import Any
 from .. import config
 from ..core.clock import Clock, runtime_clock
 from ..core.life_sim import ensure_world_today
-from ..core.pipeline import TurnOutcome, handle_proactive_turn, handle_turn
+from ..core.pipeline import (
+    TurnOutcome,
+    handle_proactive_turn,
+    handle_turn,
+    persist_delivered_reply,
+    write_delivery_failure_trace,
+)
 from ..core.proactive import beat_fingerprint, scan_for_due_beat
 from ..core.storage import Relationship, UserStore
 from ..core.world import Beat, WorldStore
@@ -46,18 +52,31 @@ async def _handle_and_send(
     clk = clock or runtime_clock()
     world = await asyncio.to_thread(ensure_world_today, clk, WorldStore(), get_model("primary"))
     outcome = await asyncio.to_thread(
-        handle_turn, str(chat_id), user_text, store, s1, s2, clock=clk, world=world
+        handle_turn,
+        str(chat_id),
+        user_text,
+        store,
+        s1,
+        s2,
+        clock=clk,
+        world=world,
+        persist_reply=False,
     )
-    _log_turn(chat_id, user_text, outcome)
     if outcome.replied and outcome.bubbles:
-        await send_bubbles(
-            bot,
-            chat_id,
-            outcome.bubbles,
-            outcome.typing_ms,
-            outcome.bubble_gaps_ms,
-            sleeper=sleeper,
-        )
+        try:
+            await send_bubbles(
+                bot,
+                chat_id,
+                outcome.bubbles,
+                outcome.typing_ms,
+                outcome.bubble_gaps_ms,
+                sleeper=sleeper,
+            )
+        except Exception as e:
+            await asyncio.to_thread(write_delivery_failure_trace, store, outcome, e)
+            raise
+        await asyncio.to_thread(persist_delivered_reply, store, outcome)
+    _log_turn(chat_id, user_text, outcome)
     return outcome
 
 
@@ -257,19 +276,33 @@ async def cmd_tick(update: Any, context: Any) -> None:
     s1 = get_model("step1")
     s2 = get_model("step2")
     outcome = await asyncio.to_thread(
-        handle_proactive_turn, str(chat_id), beat, store, s1, s2, clock=clk, world=world
+        handle_proactive_turn,
+        str(chat_id),
+        beat,
+        store,
+        s1,
+        s2,
+        clock=clk,
+        world=world,
+        persist_reply=False,
     )
-    store.mark_considered(now, beat_fingerprint(beat))
-    _log_turn(chat_id, f"[proactive beat] {beat.intent}", outcome)
     if outcome.replied and outcome.bubbles:
+        try:
+            await send_bubbles(
+                context.bot, chat_id, outcome.bubbles, outcome.typing_ms, outcome.bubble_gaps_ms
+            )
+        except Exception as e:
+            await asyncio.to_thread(write_delivery_failure_trace, store, outcome, e)
+            raise
+        await asyncio.to_thread(persist_delivered_reply, store, outcome)
+        store.mark_considered(now, beat_fingerprint(beat))
         store.bump_proactive_count(now)
-        await send_bubbles(
-            context.bot, chat_id, outcome.bubbles, outcome.typing_ms, outcome.bubble_gaps_ms
-        )
     else:
+        store.mark_considered(now, beat_fingerprint(beat))
         await context.bot.send_message(
             chat_id=chat_id, text=f"[tick] impulse passed (silent) — beat: {beat.intent[:50]}"
         )
+    _log_turn(chat_id, f"[proactive beat] {beat.intent}", outcome)
 
 
 # ---------- 普通消息:debounce → pipeline ----------
