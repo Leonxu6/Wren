@@ -149,6 +149,41 @@ def test_restore_smoke_reports_user_count(tmp_path: Path) -> None:
     assert "users:    2" in proc2.stdout
 
 
+def test_docs_do_not_show_stale_positional_restore_examples() -> None:
+    """#27 PR review followup: MAINTENANCE.md / docs/RUNBOOK.md 不该再有旧 positional
+    restore 命令(本 PR 后旧 `restore.sh ... /srv/wren` 会被 unknown-arg fail)。
+
+    Stale 信号 = 旧 incident-runbook 教错命令,运维真灾时跑了直接 exit 2。
+    """
+    for doc in ("MAINTENANCE.md", "docs/RUNBOOK.md"):
+        text = (_repo_root() / doc).read_text()
+        # 旧 positional 模式:`restore.sh <archive> /srv/wren`(live 位置参数)
+        # 旧 positional 模式:`restore.sh <archive> /tmp/...`(staging 位置参数)
+        # 新模式必须显式 `--live` 或 `--staging <dir>`
+        import re
+        bad = re.findall(
+            r"restore\.sh\s+[^\s]+\s+/(?:srv/wren\b|tmp/restore-check)",
+            text,
+        )
+        assert not bad, (
+            f"{doc} 仍含旧 positional restore 命令(PR #41 reviewer 要求清理):{bad}"
+        )
+
+
+def test_live_restore_docs_mention_stop_services() -> None:
+    """#27 PR review followup: live restore 必须配 docker compose stop 提示
+    (本 PR 不主动 stop services,但 runbook 必须教 ops 先停服,否则 race)。"""
+    for doc in ("MAINTENANCE.md", "docs/RUNBOOK.md"):
+        text = (_repo_root() / doc).read_text()
+        # 找含 `--live` 的段落,附近(同段落内)应该有 docker compose stop 提示
+        if "--live" not in text:
+            continue
+        # 简单 heuristic:`--live` 出现的同时,文档某处也提了 `docker compose stop`
+        assert "docker compose stop" in text, (
+            f"{doc} 提到 --live 但缺 `docker compose stop` 停服提示(PR #41 reviewer)"
+        )
+
+
 @pytest.fixture(autouse=True)
 def _cleanup_staging_tmp() -> None:
     """staging 默认调用 mktemp 在 OS tmp 区(macOS /var/folders;Linux /tmp),

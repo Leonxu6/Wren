@@ -35,6 +35,12 @@ openssl enc -d -aes-256-cbc -pbkdf2 -pass env:WREN_BACKUP_PASSPHRASE \
   -in /srv/wren-backups/wren-<TS>.tgz.age -out /tmp/wren-<TS>.tgz
 scripts/restore.sh /tmp/wren-<TS>.tgz --staging /tmp/restore-check && rm /tmp/wren-<TS>.tgz
 diff -r /srv/wren/data /tmp/restore-check/data && echo OK
+# 真灾备恢复 live(**必须先停服**;详见 MAINTENANCE.md §6 "数据恢复"):
+#   docker compose stop bot metrics viewer
+#   openssl enc -d -aes-256-cbc -pbkdf2 -pass env:WREN_BACKUP_PASSPHRASE \
+#     -in /srv/wren-backups/wren-<TS>.tgz.age -out /tmp/wren-<TS>.tgz
+#   scripts/restore.sh /tmp/wren-<TS>.tgz --live && rm /tmp/wren-<TS>.tgz
+#   docker compose up -d --build
 ```
 
 ## 4. BotFather
