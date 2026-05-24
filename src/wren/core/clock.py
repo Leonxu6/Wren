@@ -1,10 +1,16 @@
-"""可注入时钟 seam(§5)。生产用 SystemClock(真实 UTC);eval 用 MockClock 快进。"""
+"""可注入时钟 seam(§5)。生产用 SystemClock(真实 ET);eval 用 MockClock 快进。"""
 
 from __future__ import annotations
 
 import os
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
+from zoneinfo import ZoneInfo
+
+# Wren 锚定单一 ET 时区(ARCHITECTURE §5):life-sim 是 ET 早晨,夜结算是 ET 02:30,
+# P5 beat 窗口是 ET 时刻。SystemClock 必须返回 ET wall-clock —— 否则 Step1 的 `now` /
+# world date / proactive 命中窗口都按 UTC 偏 4-5h(#32)。
+_ET = ZoneInfo("America/New_York")
 
 
 class Clock(Protocol):
@@ -12,8 +18,15 @@ class Clock(Protocol):
 
 
 class SystemClock:
+    """生产 wall-clock:ET (America/New_York),tz-aware datetime。
+
+    业务面用 ET(她的人格锚定 Brooklyn,life-sim 一天是 ET 0:00–24:00);
+    分析/日志面仍 UTC —— `iso_z(dt)` 写 trace 时自动 `.astimezone(UTC)`,
+    所以这次改不影响 trace 时间格式,只改"Wren 此刻在哪个 wall-clock"(#32)。
+    """
+
     def now(self) -> datetime:
-        return datetime.now(UTC)
+        return datetime.now(_ET)
 
 
 class MockClock:
