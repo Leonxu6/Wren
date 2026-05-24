@@ -23,7 +23,8 @@ def run_life_sim(clock: Clock, world_store: WorldStore, model: ChatModel) -> str
     """生成并写入今天的 world/today.md,返回其内容。读 life_arcs + 昨天 → 一次 LLM call。
 
     推理模型偶发空/截断输出 → 重试一次,再让 assemble_today 兜底(降低 fallback 频率)。
-    fallback 仍是贯穿钟点的合法 world,所以即便兜底也不崩、now 仍能绑。
+    #28:模型抛异常时也 retry 一次,仍失败 → fallback(空文本) → assemble_today fallback,
+    确保 turn 不整批崩。failure 路径写 stdout 让 ops 看见,不上抛。
     """
     now = clock.now()
     date = f"{now:%Y-%m-%d}"
@@ -31,10 +32,24 @@ def run_life_sim(clock: Clock, world_store: WorldStore, model: ChatModel) -> str
     msgs = build_life_sim_messages(
         date=date, weekday=f"{now:%A}", life_arcs=arcs, yesterday=world_store.read_yesterday()
     )
-    out = model.complete(msgs, temperature=0.9, max_tokens=config.max_tokens())
-    if "## her day" not in out.text.lower():  # 空/坏一次 → 重试一次再兜底
+    # 第 1 次调用(带异常 retry)
+    raw_text = ""
+    try:
         out = model.complete(msgs, temperature=0.9, max_tokens=config.max_tokens())
-    content = assemble_today(date, out.text, arcs)
+        raw_text = out.text
+    except Exception as e:  # noqa: BLE001 — life-sim 失败不能拖崩 reactive turn
+        print(f"⚠️  [life-sim] 模型抛异常,retry 一次:{type(e).__name__}: {e}", flush=True)
+    # 若第 1 次没拿到合法 body(异常 / 缺 her day) → retry
+    if "## her day" not in raw_text.lower():
+        try:
+            out = model.complete(msgs, temperature=0.9, max_tokens=config.max_tokens())
+            raw_text = out.text
+        except Exception as e:  # noqa: BLE001
+            print(f"⚠️  [life-sim] retry 也抛异常,走 fallback world:{type(e).__name__}: {e}",
+                  flush=True)
+            raw_text = ""
+    # assemble_today 内已含 validate_today + fallback,raw_text='' 也安全
+    content = assemble_today(date, raw_text, arcs)
     world_store.write_today(content)
     return content
 
