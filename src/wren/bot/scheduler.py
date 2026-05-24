@@ -139,12 +139,10 @@ async def proactive_tick(
             beat = decision.beat
             if beat is None:
                 continue
-            if turn_blocked():  # 成本天花板:主动消息也计入(优先级低于反应轮)
-                break
             # 护栏 2(inside-lock 再确认,#49):pre-lock 检查与 lock 获取之间,
             # 若 reactive turn 抢先持锁 + 触新 debounce job + 写 trace → 此时
             # **同 chat 实际正在对话**,proactive 还按 stale 状态发就是"插嘴"。
-            # 进锁后重新 read store + jq,任一新护栏 fire → 退出,不发不 mark。
+            # 进锁后重新 read store + jq,任一新护栏 fire → 退出,不发不 mark/不 bump cap。
             async with _chat_lock(cid):
                 if jq is not None and jq.get_jobs_by_name(f"debounce-{chat_id}"):
                     continue  # reactive turn 刚进 debounce → 让路
@@ -159,6 +157,10 @@ async def proactive_tick(
                 )
                 if fresh_decision.beat is None:
                     continue  # gap 中 beat 已被别的路径 mark 或 budget 用尽
+                # cost cap(#49 reviewer 指出):必须在所有 inside-lock skip 路径**之后**才 bump,
+                # 否则 race-skip 也会消耗每日 cap,虽然没发气泡/没写 trace。
+                if turn_blocked():
+                    break
                 beat = fresh_decision.beat
                 outcome = await asyncio.to_thread(
                     handle_proactive_turn, chat_id, beat, store, s1, s2, clock=clk, world=world
