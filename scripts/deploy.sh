@@ -3,8 +3,16 @@
 # 用法: ./scripts/deploy.sh [service]
 #   service 默认 bot,可选 viewer / metrics / all。
 # 详细文档见 MAINTENANCE.md §5。
-set -e
+# set -e 单独不够:`false | tail -10` 在 pipefail 关时整体 exit 0,会把
+# "远端 rebuild 失败" 报告成成功(#23)。-u 抓未定义变量,-o pipefail 抓 pipeline 中段失败。
+set -euo pipefail
 SERVICE="${1:-bot}"
+
+# 校验 SERVICE 只允许 4 个值,避免把意外字符串拼进 docker compose 命令(#23)
+case "$SERVICE" in
+  bot|metrics|viewer|all) ;;
+  *) echo "✗ SERVICE 必须是 bot|metrics|viewer|all,实际:$SERVICE" >&2; exit 2 ;;
+esac
 
 cd "$(dirname "$0")/.."   # 走到仓库根
 
@@ -27,11 +35,20 @@ echo "  ✓ rsync OK"
 
 echo
 echo "== 3) rebuild + restart $SERVICE =="
+# 显式捕获 ssh 输出 + exit code,失败时 tail 出错 + 非零 exit;
+# 不再裸 `| tail` 让 tail 的 0 覆盖 ssh 的非零(#23)。pipefail 是兜底。
+REBUILD_LOG=$(mktemp); trap 'rm -f "$REBUILD_LOG"' EXIT
 if [ "$SERVICE" = "all" ]; then
-  ssh -p 62769 root@104.233.146.220 'cd /srv/wren && docker compose up -d --build' | tail -20
+  REBUILD_CMD='cd /srv/wren && docker compose up -d --build'
 else
-  ssh -p 62769 root@104.233.146.220 "cd /srv/wren && docker compose up -d --build $SERVICE" | tail -10
+  REBUILD_CMD="cd /srv/wren && docker compose up -d --build $SERVICE"
 fi
+if ! ssh -p 62769 root@104.233.146.220 "$REBUILD_CMD" > "$REBUILD_LOG" 2>&1; then
+  echo "✗ 远端 rebuild 失败,最后 20 行:" >&2
+  tail -20 "$REBUILD_LOG" >&2
+  exit 1
+fi
+tail -20 "$REBUILD_LOG"
 
 echo
 echo "== 4) tail logs(最近 20 行) =="
