@@ -38,26 +38,45 @@ def active_chat_ids() -> list[str]:
     return [p.name for p in sorted(root.iterdir()) if p.is_dir()]
 
 
+async def _settle_one_locked(cid: int, chat_id: str, model: ChatModel) -> int:
+    """单个用户的 settlement:在 `_chat_lock(cid)` 内跑,与 on_message / proactive 串行(#12)。
+
+    若 live turn 正在同 chat 处理(持有同一把锁),settlement 会等到 lock 释放才进;
+    避免读 impressions 后 → live turn 追加新 impression → settle clear 把新的也清掉的竞态。
+
+    返回 1 if 真跑了 settle,0 if 不存在/未到结算窗口/失败。"""
+    try:
+        store = UserStore(chat_id)
+        if not store.exists():
+            return 0
+        async with _chat_lock(cid):
+            outcome = await asyncio.to_thread(settle_nightly, store, model)
+    except Exception as e:  # noqa: BLE001 — 批处理鲁棒性优先(单用户失败不拖垮整批)
+        print(f"[settle] {chat_id} 失败:{e}", flush=True)
+        return 0
+    if outcome.ran:
+        print(
+            f"[settle] {chat_id}: lv {outcome.before.level}→{outcome.after.level} · "
+            f"freeze {outcome.before.freeze}→{outcome.after.freeze}",
+            flush=True,
+        )
+        return 1
+    return 0
+
+
 async def settle_all(_context: Any = None) -> int:
-    """对所有活跃用户跑一次结算;单个用户失败不拖垮整批。返回实际结算的人数。"""
+    """对所有活跃用户跑一次结算;单个用户失败不拖垮整批。返回实际结算的人数。
+
+    每个用户走 `_chat_lock(cid)`(与 on_message / proactive 共享同一把锁),避免与
+    live turn 在结算窗口附近争 impressions(#12)。non-numeric 目录跳过——锁 key 是 int。"""
     model = get_model("settlement")
     ran = 0
     for chat_id in active_chat_ids():
         try:
-            store = UserStore(chat_id)
-            if not store.exists():
-                continue
-            outcome = await asyncio.to_thread(settle_nightly, store, model)
-        except Exception as e:  # noqa: BLE001 — 批处理鲁棒性优先
-            print(f"[settle] {chat_id} 失败:{e}", flush=True)
-            continue
-        if outcome.ran:
-            ran += 1
-            print(
-                f"[settle] {chat_id}: lv {outcome.before.level}→{outcome.after.level} · "
-                f"freeze {outcome.before.freeze}→{outcome.after.freeze}",
-                flush=True,
-            )
+            cid = int(chat_id)
+        except ValueError:
+            continue  # 与 proactive_tick 一致:只对数字 chat_id 上锁
+        ran += await _settle_one_locked(cid, chat_id, model)
     return ran
 
 
