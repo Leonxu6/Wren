@@ -27,7 +27,7 @@ from ..core.world import Beat, WorldStore
 from ..model.base import ChatModel
 from ..model.registry import get_model
 from ..onboarding import static_copy
-from .limits import rate_limited, turn_blocked
+from .limits import model_call_exhausted, rate_limited
 from .sender import Sleeper, send_bubbles
 
 
@@ -327,8 +327,8 @@ async def _flush_and_handle(chat_id: int, context: Any) -> None:
     text = " ".join(buf).strip()
     context.chat_data["buffer"] = []
     if text:
-        if turn_blocked():
-            print(f"[{chat_id}] turn skipped — 今日成本天花板已达(WREN_DAILY_TURN_CAP)", flush=True)
+        if model_call_exhausted():
+            print(f"[{chat_id}] turn skipped — 今日 LLM 调用天花板已达(WREN_DAILY_TURN_CAP)", flush=True)
             return
         # 同会话串行:保证回复有序,且后一轮能看到前一轮已落盘的回复(不重复作答)。
         async with _chat_lock(chat_id):

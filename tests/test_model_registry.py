@@ -10,19 +10,25 @@ from wren import config
 from wren.model import get_model, list_candidates
 from wren.model.fake import FakeChatModel
 from wren.model.openai_compat import OpenAICompatModel
+from wren.model.registry import DailyCapModel
 
 
 def test_no_key_returns_fake() -> None:
     # autouse fixture 已设 WREN_FAKE_MODEL=1 且删 key
-    assert isinstance(get_model("primary"), FakeChatModel)
-    assert isinstance(get_model("judge"), FakeChatModel)
+    primary = get_model("primary")
+    judge = get_model("judge")
+    assert isinstance(primary, DailyCapModel)
+    assert isinstance(primary.inner, FakeChatModel)
+    assert isinstance(judge, DailyCapModel)
+    assert isinstance(judge.inner, FakeChatModel)
 
 
 def test_with_key_returns_real(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("WREN_FAKE_MODEL", raising=False)
     monkeypatch.setenv("WREN_API_KEY", "sk-test-not-real")
     model = get_model("primary")
-    assert isinstance(model, OpenAICompatModel)  # 仅构造,不发网络
+    assert isinstance(model, DailyCapModel)
+    assert isinstance(model.inner, OpenAICompatModel)  # 仅构造,不发网络
     assert model.name == "primary"
 
 

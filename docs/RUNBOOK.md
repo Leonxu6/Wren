@@ -89,7 +89,7 @@ pkill -f "ssh -fN -L 8002"
 | `WREN_SETTLEMENT_MODEL`/`_API_KEY`/`_BASE_URL` | 夜结算模型(默认 v4-pro;升 Opus 改这行) |
 | `WREN_OWNER_CHAT_IDS` | 调试命令 owner 白名单(逗号分隔;**公开发布必设**,空=锁死) |
 | `WREN_RATE_LIMIT_PER_MIN` | 每用户每分钟消息上限(默认 20;0=不限) |
-| `WREN_DAILY_TURN_CAP` / `WREN_DAILY_CAP_HARD` | 全局每日 turn 成本天花板(默认 0=不限;**公开发布建议设**) |
+| `WREN_DAILY_TURN_CAP` / `WREN_DAILY_CAP_HARD` | 全局每日 LLM complete() 调用天花板(默认 0=不限;**公开发布建议设**) |
 | `WREN_METRICS_SALT` | chat_id 哈希盐(**勿提交**) · `WREN_METRICS_DB` 库路径覆盖 |
 | `WREN_DEBOUNCE_S` / `WREN_EVENTS_CAP` / `WREN_DATA_ROOT` / `WREN_WORLD_ROOT` | 行为/路径调参 |
 
@@ -105,5 +105,5 @@ pkill -f "ssh -fN -L 8002"
 ## 8. 故障排查
 - 没有夜结算/主动消息日志 → 确认镜像装了 `[job-queue]`(本 Dockerfile 已含)。
 - Wren 不主动找人 → 正常:Lv0-1 不主动,要挨到 Lv2+(夜结算慢推);或用户最近 25min 有对话(新近度护栏让路)。
-- 花费异常 → 看 `cost_daily`;设/调 `WREN_DAILY_TURN_CAP`(+`WREN_DAILY_CAP_HARD=1` 硬停)。
+- 花费异常 → 看 `cost_daily`;设/调 `WREN_DAILY_TURN_CAP`(+`WREN_DAILY_CAP_HARD=1` 硬停;按 LLM complete() 次数执行)。
 - 任何人能跳级 → 检查 `WREN_OWNER_CHAT_IDS` 是否设妥(空=没人能用调试命令,但务必确认没误填)。

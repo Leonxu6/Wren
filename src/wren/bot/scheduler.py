@@ -27,7 +27,7 @@ from ..core.world import WorldStore
 from ..model.base import ChatModel
 from ..model.registry import get_model
 from .handlers import _chat_lock, _log_turn  # 复用 on_message 同一把 per-chat 锁,不与之竞态
-from .limits import turn_blocked
+from .limits import model_call_exhausted
 from .sender import send_bubbles
 
 _ET = ZoneInfo("America/New_York")
@@ -128,6 +128,8 @@ async def proactive_tick(
     """
     clk = clock or runtime_clock()
     now = clk.now()
+    if model_call_exhausted(now=now):
+        return 0
     s1 = s1_model or get_model("step1")
     s2 = s2_model or get_model("step2")
     primary = world_model or get_model("primary")
@@ -180,9 +182,7 @@ async def proactive_tick(
                 )
                 if fresh_decision.beat is None:
                     continue  # gap 中 beat 已被别的路径 mark 或 budget 用尽
-                # cost cap(#49 reviewer 指出):必须在所有 inside-lock skip 路径**之后**才 bump,
-                # 否则 race-skip 也会消耗每日 cap,虽然没发气泡/没写 trace。
-                if turn_blocked():
+                if model_call_exhausted(now=fresh_now):
                     break
                 beat = fresh_decision.beat
                 outcome = await asyncio.to_thread(
