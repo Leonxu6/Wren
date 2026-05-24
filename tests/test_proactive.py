@@ -184,3 +184,75 @@ def test_mech_gate_catches_needy_proactive_ping() -> None:
     # 主动也走同一 mech_gate:甜腻称呼/禁词照样被挡(通用 ping 的「魂」由 judge 管,这里只验机制复用)
     assert not run_mech_gate(["hey babe you up?"]).passed
     assert not run_mech_gate(["i'm always here for you 🥰"]).passed
+
+
+# === #53 PR review followup:proactive path 对称镜像 reactive failure trace ===
+
+
+class _RaisingChatModel:
+    def __init__(self, msg: str = "proactive down") -> None:
+        self.name = "raise-fake-proactive"
+        self._msg = msg
+        self.calls: list = []
+
+    def complete(self, messages, **_):  # type: ignore[no-untyped-def]
+        self.calls.append(messages)
+        raise RuntimeError(self._msg)
+
+
+def test_proactive_step1_exception_writes_failure_trace(tmp_path: Path) -> None:
+    """#53 reviewer 要求:proactive Step1 抛 → 1 个 kind='proactive' failure trace
+    (step1.error / stage='step1'),outcome.replied=False,Step2 一次都没被调。"""
+    store = _store(tmp_path, 3)
+    s1_bad = _RaisingChatModel("proactive step1 down")
+    s2_unused = FakeChatModel(script=["should-not-be-called"])
+
+    out = handle_proactive_turn(
+        "u", _BEAT, store, s1_bad, s2_unused,
+        clock=MockClock(_MON), world="## beats\n" + _BEAT.render(),
+    )
+    assert not out.replied
+    assert out.bubbles == []
+    traces = read_traces(store.dir)
+    assert len(traces) == 1
+    t = traces[0]
+    assert t["kind"] == "proactive"
+    assert t["user_turn"] is None
+    assert t["step1"].get("error") == "proactive step1 down"
+    assert t["step1"].get("stage") == "step1"
+    assert t["step2"] is None
+    assert t["sent"] is None
+    assert s2_unused.calls == []
+    # 半状态防御:Step1 没产出 → impression 没写
+    impressions_file = store.dir / "impressions_today.md"
+    if impressions_file.exists():
+        assert "noticing" not in impressions_file.read_text(encoding="utf-8")
+
+
+def test_proactive_step2_exception_writes_failure_trace_with_step1(
+    tmp_path: Path,
+) -> None:
+    """#53 reviewer 要求:proactive Step1 OK + Step2 抛 → failure trace 含 step1_dict
+    + step2.error,outcome.replied=False,**不**写 wren dialogue(防 reactive 后续接错气泡)。"""
+    store = _store(tmp_path, 3)
+    s1_ok = FakeChatModel(responder=_send_responder)  # 正常 step1 + send 决定
+    s2_bad = _RaisingChatModel("proactive step2 down")
+
+    out = handle_proactive_turn(
+        "u", _BEAT, store, s1_ok, s2_bad,
+        clock=MockClock(_MON.replace(year=2026, month=5, day=21)),
+        world="## beats\n" + _BEAT.render(),
+    )
+    assert not out.replied
+    traces = read_traces(store.dir)
+    assert len(traces) == 1
+    t = traces[0]
+    assert t["kind"] == "proactive"
+    assert t["user_turn"] is None
+    assert t["step1"].get("error") is None  # step1 成功
+    assert t["step1"].get("reply") is True
+    assert t["step2"].get("error") == "proactive step2 down"
+    assert t["step2"].get("stage") == "step2"
+    assert t["sent"] is None
+    # 关键:wren dialogue **不写**(防下次 reactive 接住一条没真发出的气泡)
+    assert "wren:" not in store.read_recent_dialogue()

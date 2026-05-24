@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from ..model.base import ChatModel
 from .clock import Clock, SystemClock, iso_z
@@ -37,6 +38,50 @@ def compute_pacing(bubbles: list[str]) -> tuple[int, list[int]]:
     return typing_ms, gaps
 
 
+def _failure_step_dict(stage: str, error: Exception, model: ChatModel) -> dict[str, Any]:
+    """Step1/Step2 模型抛异常时的 trace 字段 schema(#53)。"""
+    return {
+        "error": str(error),
+        "error_type": type(error).__name__,
+        "stage": stage,
+        "model": getattr(model, "name", "unknown"),
+    }
+
+
+def _write_failure_trace(
+    store: UserStore,
+    turn_id: str,
+    chat_id: str,
+    ts: str,
+    user_text: str | None,
+    rel: dict[str, Any],
+    *,
+    stage: str,
+    error: Exception,
+    model: ChatModel,
+    step1_dict: dict[str, Any] | None = None,
+    kind: str = "reactive",
+) -> TurnTrace:
+    """统一 failure trace writer(#53):reactive + proactive 公用同一 schema。
+
+    stage='step1':step1 抛 → 写 step1=failure_dict + step2=None + sent=None
+    stage='step2':step2 抛 → 写 step1=step1_dict(成功) + step2=failure_dict + sent=None
+    """
+    if stage == "step1":
+        step1 = _failure_step_dict("step1", error, model)
+        step2: dict[str, Any] | None = None
+    elif stage == "step2":
+        if step1_dict is None:
+            raise ValueError("step2 failure 必须提供 step1_dict(它已成功)")
+        step1 = step1_dict
+        step2 = _failure_step_dict("step2", error, model)
+    else:
+        raise ValueError(f"unknown failure stage {stage!r}")
+    trace = TurnTrace(turn_id, chat_id, ts, user_text, rel, step1, step2, sent=None, kind=kind)
+    write_trace(store.dir, trace)
+    return trace
+
+
 def handle_turn(
     chat_id: str,
     user_text: str,
@@ -55,7 +100,20 @@ def handle_turn(
     now = f"{clock.now():%A %H:%M}"
     store.append_dialogue("user", user_text)
     ctx = assemble_context(store, user_text, world=world, now=now)
-    s1 = run_step1(ctx, s1_model)
+
+    ts = iso_z(clock.now())
+    turn_id = f"{chat_id}-{count_traces(store.dir) + 1}"
+    rel = {"lv": ctx.relationship.level, "freeze": ctx.relationship.freeze}
+
+    # Step1 try/except(#53):模型抛 → 写 failure trace,返沉默 outcome(不上抛)
+    try:
+        s1 = run_step1(ctx, s1_model)
+    except Exception as e:  # noqa: BLE001 — observability:任何模型异常都要留 trace
+        trace = _write_failure_trace(
+            store, turn_id, chat_id, ts, user_text, rel,
+            stage="step1", error=e, model=s1_model,
+        )
+        return TurnOutcome(False, [], 0, 0, [], trace)
 
     # Step1 写回:inner_voice + 印象 + 可能记住的事(沉默轮也记 → 必须在 reply 分支前)
     if s1.monologue:
@@ -64,10 +122,6 @@ def handle_turn(
         store.append_impression(s1.impression)
     if s1.event_to_store:
         store.append_event(**s1.event_to_store)
-
-    ts = iso_z(clock.now())
-    turn_id = f"{chat_id}-{count_traces(store.dir) + 1}"
-    rel = {"lv": ctx.relationship.level, "freeze": ctx.relationship.freeze}
     step1_dict = {
         "prompt": {  # 她"读到了什么"(动态 context;静态 canon 不重复落)
             "now": ctx.now,
@@ -97,7 +151,17 @@ def handle_turn(
         write_trace(store.dir, trace)
         return TurnOutcome(False, [], s1.delay_s, 0, [], trace)
 
-    s2 = run_step2(s1, ctx, s2_model)
+    # Step2 try/except(#53):s1 已成功;s2 失败 → 写 failure trace 含 step1_dict,
+    # **不写 wren dialogue**(防"伪发送"假阳)。impression / event 保留(s1 真实思考结果)。
+    try:
+        s2 = run_step2(s1, ctx, s2_model)
+    except Exception as e:  # noqa: BLE001 — observability:任何模型异常都要留 trace
+        trace = _write_failure_trace(
+            store, turn_id, chat_id, ts, user_text, rel,
+            stage="step2", error=e, model=s2_model, step1_dict=step1_dict,
+        )
+        return TurnOutcome(False, [], s1.delay_s, 0, [], trace)
+
     store.append_dialogue("wren", " / ".join(s2.bubbles))
     typing_ms, gaps = compute_pacing(s2.bubbles)
     step2_dict = {
@@ -135,7 +199,20 @@ def handle_proactive_turn(
     clock = clock or SystemClock()
     now = f"{clock.now():%A %H:%M}"
     ctx = assemble_context(store, "", world=world, now=now)  # 无 user_text(显式空)
-    s1 = run_step1_proactive(ctx, beat, s1_model)
+
+    ts = iso_z(clock.now())
+    turn_id = f"{chat_id}-{count_traces(store.dir) + 1}"
+    rel = {"lv": ctx.relationship.level, "freeze": ctx.relationship.freeze}
+
+    # Step1 try/except(#53 proactive 对称):模型抛 → 写 failure trace(kind="proactive")
+    try:
+        s1 = run_step1_proactive(ctx, beat, s1_model)
+    except Exception as e:  # noqa: BLE001 — observability:任何模型异常都要留 trace
+        trace = _write_failure_trace(
+            store, turn_id, chat_id, ts, None, rel,
+            stage="step1", error=e, model=s1_model, kind="proactive",
+        )
+        return TurnOutcome(False, [], 0, 0, [], trace)
 
     # Step1 写回(同 handle_turn:压制轮也记 → 必须在 reply 分支前)
     if s1.monologue:
@@ -144,10 +221,6 @@ def handle_proactive_turn(
         store.append_impression(s1.impression)
     if s1.event_to_store:
         store.append_event(**s1.event_to_store)
-
-    ts = iso_z(clock.now())
-    turn_id = f"{chat_id}-{count_traces(store.dir) + 1}"
-    rel = {"lv": ctx.relationship.level, "freeze": ctx.relationship.freeze}
     step1_dict = {
         "prompt": {  # 同 handle_turn 的动态 context + beat(来处可追,§6 验收)
             "now": ctx.now,
@@ -176,7 +249,18 @@ def handle_proactive_turn(
         write_trace(store.dir, trace)
         return TurnOutcome(False, [], s1.delay_s, 0, [], trace)
 
-    s2 = run_step2(s1, ctx, s2_model, proactive=True)  # 渲染成起头而非回话
+    # Step2 try/except(#53 proactive 对称):s1 已成功;s2 失败 → failure trace,
+    # 不写 wren dialogue 防"伪起头"——下次 reactive 不该接住一条没真发出的气泡。
+    try:
+        s2 = run_step2(s1, ctx, s2_model, proactive=True)  # 渲染成起头而非回话
+    except Exception as e:  # noqa: BLE001 — observability:任何模型异常都要留 trace
+        trace = _write_failure_trace(
+            store, turn_id, chat_id, ts, None, rel,
+            stage="step2", error=e, model=s2_model,
+            step1_dict=step1_dict, kind="proactive",
+        )
+        return TurnOutcome(False, [], s1.delay_s, 0, [], trace)
+
     store.append_dialogue("wren", " / ".join(s2.bubbles))  # 进对话历史,下次反应轮接得住
     typing_ms, gaps = compute_pacing(s2.bubbles)
     step2_dict = {

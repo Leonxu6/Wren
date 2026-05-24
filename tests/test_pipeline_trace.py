@@ -122,3 +122,88 @@ def test_compute_pacing() -> None:
     typing, gaps = compute_pacing(["ha", "the wine was bad though", "which one were you"])
     assert typing > 0 and len(gaps) == 2
     assert compute_pacing([]) == (0, [])
+
+
+# === #53:model 失败 → 必须留 failure trace,不留半状态、不假装回复成功 ===
+
+
+class _RaisingChatModel:
+    """fake model that raises on .complete() — 模拟 provider 异常 / 超时。"""
+
+    def __init__(self, name: str = "raise-fake",
+                 error_type: type[Exception] = RuntimeError,
+                 msg: str = "provider down") -> None:
+        self.name = name
+        self._error_type = error_type
+        self._msg = msg
+        self.calls: list = []
+
+    def complete(self, messages, **_):  # type: ignore[no-untyped-def]
+        self.calls.append(messages)
+        raise self._error_type(self._msg)
+
+
+def test_step1_exception_writes_failure_trace_no_reply(data_root: Path) -> None:
+    """#53:Step1 抛 → 写 1 条 failure trace(step1.error / stage='step1'),
+    outcome.replied=False,**不**调 Step2,**不**留半状态(no inner_voice / impression / event)。"""
+    s = UserStore("err1", data_root)
+    s.init_user()
+    s1_bad = _RaisingChatModel(msg="step1 timed out")
+    s2_unused = FakeChatModel(script=["should-not-be-called"])
+
+    out = handle_turn("err1", "hey", s, s1_bad, s2_unused)
+
+    assert not out.replied
+    assert out.bubbles == []
+    traces = read_traces(s.dir)
+    assert len(traces) == 1
+    assert traces[0]["step1"].get("error") == "step1 timed out"
+    assert traces[0]["step1"].get("stage") == "step1"
+    assert traces[0]["step2"] is None
+    assert traces[0]["sent"] is None
+    assert s2_unused.calls == []  # Step2 一次都没被调
+    assert "hey" in (s.dir / "conversation.md").read_text(encoding="utf-8")  # user_text 仍写(用户事实发了)
+    assert s.read_impressions() == []  # 半状态防御:没 step1 结果可衍生
+
+
+def test_step2_exception_writes_failure_trace_with_step1(data_root: Path) -> None:
+    """#53:Step1 成功 + Step2 抛 → failure trace 含完整 step1_dict + step2.error,
+    outcome.replied=False,**不**写 wren dialogue(防"伪发送"假阳)。"""
+    s = UserStore("err2", data_root)
+    s.init_user()
+    s1_ok = FakeChatModel(script=[_S1_REPLY])
+    s2_bad = _RaisingChatModel(msg="step2 5xx", error_type=ConnectionError)
+
+    out = handle_turn("err2", "you up", s, s1_ok, s2_bad)
+
+    assert not out.replied
+    traces = read_traces(s.dir)
+    assert len(traces) == 1
+    t = traces[0]
+    assert t["step1"]["reply"] is True
+    assert t["step1"].get("error") is None
+    assert t["step2"].get("error") == "step2 5xx"
+    assert t["step2"].get("error_type") == "ConnectionError"
+    assert t["step2"].get("stage") == "step2"
+    assert t["sent"] is None
+    conv = (s.dir / "conversation.md").read_text(encoding="utf-8")
+    assert "user: you up" in conv
+    assert "wren:" not in conv  # 关键:无伪发送
+    # step1 衍生印象保留(step1 真思考结果,与 step2 能否发气泡无关)
+    assert s.read_impressions() == ["noticed the small painting"]
+
+
+def test_consecutive_failure_traces_have_distinct_turn_ids(data_root: Path) -> None:
+    """连续 2 个失败 turn 必须 turn_id 不同(count_traces 在 failure trace 写后递增)。"""
+    s = UserStore("err3", data_root)
+    s.init_user()
+    s2_unused = FakeChatModel(script=["x", "y"])
+
+    handle_turn("err3", "msg1", s, _RaisingChatModel(msg="first"), s2_unused)
+    handle_turn("err3", "msg2", s, _RaisingChatModel(msg="second"), s2_unused)
+
+    traces = read_traces(s.dir)
+    assert len(traces) == 2
+    assert traces[0]["turn_id"] != traces[1]["turn_id"]
+    assert traces[0]["step1"]["error"] == "first"
+    assert traces[1]["step1"]["error"] == "second"
