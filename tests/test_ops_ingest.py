@@ -164,13 +164,89 @@ def test_forget(data_root: Path, tmp_path: Path) -> None:
     _seed(data_root)
     db = tmp_path / "m.duckdb"
     ingest(db_path=db, data_root=data_root)
-    forget("12345", db_path=db)
+    counts = forget("12345", db_path=db)
+    # 各表删除行数 > 0(seed 有数据)— 验证 forget 返回 dict(#35)
+    assert counts["turns"] > 0
+    assert counts["settlements"] > 0
+    assert counts["users"] > 0
+    assert counts["ingest_state"] > 0
     con = connect(db, read_only=True)
     try:
         for tbl in ("turns", "settlements", "users", "ingest_state"):
             assert con.execute(f"SELECT count(*) FROM {tbl}").fetchone()[0] == 0
     finally:
         con.close()
+
+
+def test_forget_returns_zero_when_db_missing(tmp_path: Path) -> None:
+    """#35:metrics DB 不存在 → noop,返全 0 dict;不主动 create 空 DB
+    (/delete 在本地开发还没跑过 ingest 时也不该意外生成空 .duckdb)。"""
+    nonexistent = tmp_path / "no-such.duckdb"
+    counts = forget("99999", db_path=nonexistent)
+    assert counts == {"turns": 0, "settlements": 0, "users": 0, "ingest_state": 0}
+    assert not nonexistent.exists(), "noop 不该 create 空 DB"
+
+
+def test_forget_only_targets_specified_chat(
+    data_root: Path, tmp_path: Path
+) -> None:
+    """#35:forget 只删指定 chat,其他 chat 的 metrics 不受影响。"""
+    from wren.core.storage import UserStore
+    from wren.core.trace import (
+        SettlementTrace,
+        write_settlement_trace,
+        write_trace,
+    )
+
+    _seed(data_root)  # alice (12345):5 turns + 1 settle
+    # 加 bob (67890):1 turn + 1 settle
+    bob = "67890"
+    write_trace(data_root / bob, _reactive(bob, 1, reply=True, hour=10))
+    write_settlement_trace(
+        data_root / bob,
+        SettlementTrace(
+            f"{bob}-s1", bob, "2026-05-23T02:30:00Z",
+            {"lv": 0, "freeze": False}, {"lv": 1, "freeze": False},
+            ["bob impr"], {"model": "fake", "raw_out": "OK", "tokens": 100, "latency_ms": 500},
+        ),
+    )
+    UserStore(bob).write_source_once("twitter")
+
+    db = tmp_path / "m.duckdb"
+    ingest(db_path=db, data_root=data_root)
+
+    counts = forget("12345", db_path=db)
+    assert counts["turns"] > 0  # alice 5 删了
+
+    con = connect(db, read_only=True)
+    try:
+        for tbl in ("turns", "settlements", "users", "ingest_state"):
+            n = con.execute(f"SELECT count(*) FROM {tbl}").fetchone()[0]
+            assert n > 0, f"bob 应保留在 {tbl}(forget 不该误删)"
+    finally:
+        con.close()
+
+
+def test_forget_allows_same_chat_to_reingest_after(
+    data_root: Path, tmp_path: Path
+) -> None:
+    """#35 推荐 #3:删 ingest_state → 同 chat 重建后首轮 trace 能进 metrics
+    (否则旧 ingest_state 偏移残留,新 trace 被 ON CONFLICT 跳过)。"""
+    from wren.core.storage import UserStore
+    from wren.core.trace import write_trace
+
+    cid = "12345"
+    _seed(data_root)
+    db = tmp_path / "m.duckdb"
+    ingest(db_path=db, data_root=data_root)
+    forget(cid, db_path=db)
+
+    # 模拟 /delete 后用户重新开始
+    UserStore(cid).delete()
+    UserStore(cid).init_user()
+    write_trace(data_root / cid, _reactive(cid, 1, reply=True, hour=10))
+    c = ingest(db_path=db, data_root=data_root)
+    assert c["turns"] == 1, "重建后新 trace 应能 ingest(ingest_state 已清)"
 
 
 def test_diagnose_reconstructs_journey(data_root: Path) -> None:

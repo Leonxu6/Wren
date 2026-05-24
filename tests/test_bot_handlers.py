@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from wren.bot.handlers import _handle_and_send, cmd_delete
 from wren.core.storage import UserStore
 from wren.core.trace import read_traces
@@ -207,4 +209,95 @@ async def test_delete_holds_chat_lock_until_done(data_root: Path) -> None:
     # 锁释放 → cmd_delete 应完成
     await asyncio.wait_for(task, timeout=2.0)
     assert not UserStore("999", data_root).dir.exists()
+    context.bot.send_message.assert_called_once()
+
+
+async def test_delete_also_clears_metrics_rows(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#35:cmd_delete 端到端必须同步清 metrics DB 的对应 hashed rows,
+    而不是只删 data/users/<id>/。文档曾要求 ops 另跑 wren-metrics forget,
+    但用户触发的 /delete 不会执行它。"""
+    from wren.core.trace import (
+        SettlementTrace,
+        TurnTrace,
+        write_settlement_trace,
+        write_trace,
+    )
+    from wren.ops.db import connect
+    from wren.ops.ingest import ingest
+
+    cid = "55555"
+    # 1) seed: 写 trace + settle,跑 ingest 让 metrics DB 有这个用户的行
+    UserStore(cid, data_root).init_user()
+    write_trace(
+        data_root / cid,
+        TurnTrace(
+            f"{cid}-1", cid, "2026-05-22T10:00:00Z", "hi",
+            {"lv": 0, "freeze": False},
+            {"reply": True, "delay_s": 3, "impression": "", "selected_memory": [],
+             "event_stored": None, "tokens": 50, "latency_ms": 120, "model": "fake"},
+            {"tokens": 30, "latency_ms": 80, "model": "fake"},
+            {"bubbles": ["hi"], "typing_ms": 600, "bubble_gaps_ms": []},
+        ),
+    )
+    write_settlement_trace(
+        data_root / cid,
+        SettlementTrace(
+            f"{cid}-s1", cid, "2026-05-23T02:30:00Z",
+            {"lv": 0, "freeze": False}, {"lv": 1, "freeze": False},
+            ["impr"], {"model": "fake", "raw_out": "OK", "tokens": 100, "latency_ms": 500},
+        ),
+    )
+    db = tmp_path / "m.duckdb"
+    monkeypatch.setenv("WREN_METRICS_DB", str(db))
+    ingest(db_path=db, data_root=data_root)
+    # 确认 metrics 真的有该用户的行
+    con = connect(db, read_only=True)
+    try:
+        assert con.execute("SELECT count(*) FROM users").fetchone()[0] > 0
+        assert con.execute("SELECT count(*) FROM turns").fetchone()[0] > 0
+    finally:
+        con.close()
+
+    # 2) 用户 /delete
+    update = MagicMock()
+    update.effective_chat.id = int(cid)
+    context = MagicMock()
+    context.bot.send_message = AsyncMock()
+    context.job_queue.get_jobs_by_name = MagicMock(return_value=[])
+    context.chat_data = {}
+    await cmd_delete(update, context)
+
+    # 3) user dir 删了 (#34) **且** metrics rows 也清了 (#35)
+    assert not UserStore(cid, data_root).dir.exists()
+    con = connect(db, read_only=True)
+    try:
+        for tbl in ("turns", "settlements", "users", "ingest_state"):
+            n = con.execute(f"SELECT count(*) FROM {tbl}").fetchone()[0]
+            assert n == 0, f"{tbl} 应被 cmd_delete 清空(#35),实际 {n}"
+    finally:
+        con.close()
+
+
+async def test_delete_does_not_fail_when_metrics_db_missing(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#35:本地开发还没跑过 ingest → metrics DB 不存在;cmd_delete 仍应成功
+    (不主动 create 空 DB,不让 bot 因 metrics 缺失而失败)。"""
+    cid = "44444"
+    UserStore(cid, data_root).init_user()
+    nonexistent = tmp_path / "no-such.duckdb"
+    monkeypatch.setenv("WREN_METRICS_DB", str(nonexistent))
+
+    update = MagicMock()
+    update.effective_chat.id = int(cid)
+    context = MagicMock()
+    context.bot.send_message = AsyncMock()
+    context.job_queue.get_jobs_by_name = MagicMock(return_value=[])
+    context.chat_data = {}
+    await cmd_delete(update, context)  # 不应抛
+
+    assert not UserStore(cid, data_root).dir.exists()
+    assert not nonexistent.exists(), "metrics DB 不存在时不该被意外 create"
     context.bot.send_message.assert_called_once()
