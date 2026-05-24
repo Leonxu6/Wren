@@ -41,6 +41,10 @@ packages = ["src/wren"]
 target-version = "py311"
 line-length = 100
 src = ["src", "tests"]
+# 全仓 `ruff check .` 是发布 gate(README / CLAUDE.md / RUNBOOK D4 / scripts/deploy.sh)。
+# 这里显式排除一次性发布素材包目录——它放截图 / broll / 视频脚本 / 一次性生成脚本,
+# 不属于产品质量门禁面;否则那些 WIP 脚本会让全仓 gate 红、阻断 deploy 预检(见 #9)。
+extend-exclude = ["tasks/wren_distribution_recap_package"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
