@@ -71,6 +71,39 @@ async def test_silence_sends_nothing_but_traces(data_root: Path) -> None:
     assert len(read_traces(UserStore("556", data_root).dir)) == 1  # 沉默轮也有 trace
 
 
+async def test_send_failure_does_not_persist_sent_dialogue_or_trace(data_root: Path) -> None:
+    """#48:Telegram send failure must not leave local state pretending Wren replied."""
+    bot = _bot()
+    bot.send_message = AsyncMock(side_effect=RuntimeError("telegram send failed"))
+    s1 = FakeChatModel(
+        script=[
+            json.dumps(
+                {
+                    "monologue": "let's see",
+                    "reply": True,
+                    "delay_s": 1,
+                    "impression": "",
+                    "memory": [],
+                }
+            )
+        ]
+    )
+    s2 = FakeChatModel(script=[json.dumps({"messages": ["i saw that"]})])
+
+    with pytest.raises(RuntimeError, match="telegram send failed"):
+        await _handle_and_send(558, "hey", bot, s1_model=s1, s2_model=s2, sleeper=_nosleep)
+
+    store = UserStore("558", data_root)
+    conv = (store.dir / "conversation.md").read_text(encoding="utf-8")
+    assert "user: hey" in conv
+    assert "wren:" not in conv
+    traces = read_traces(store.dir)
+    assert len(traces) == 1
+    assert traces[0]["sent"] is None
+    assert traces[0]["step2"]["delivery_failed"] is True
+    assert traces[0]["step2"]["delivery_error_type"] == "RuntimeError"
+
+
 async def test_delete_command_wipes(data_root: Path) -> None:
     UserStore("777", data_root).init_user()
     update = MagicMock()
