@@ -77,3 +77,80 @@ async def test_delete_command_wipes(data_root: Path) -> None:
     context.bot.send_message = AsyncMock()
     await cmd_delete(update, context)
     assert not UserStore("777", data_root).dir.exists()
+
+
+# === #20:默认日志脱敏(让 /delete "wipe everything" 承诺成立)===
+
+
+_SENSITIVE_USER_TEXT = "MY-VERY-PRIVATE-TEXT-12345"
+_SENSITIVE_MONOLOGUE = "MY-PRIVATE-INNER-VOICE-XYZ"
+
+
+async def _send_one_turn_with_sensitive_content(
+    chat_id: int, data_root: Path
+) -> None:
+    """跑一轮,user_text + inner_voice 都带可识别 sentinel。"""
+    bot = _bot()
+    s1 = FakeChatModel(
+        script=[
+            json.dumps(
+                {
+                    "monologue": _SENSITIVE_MONOLOGUE,
+                    "reply": True,
+                    "delay_s": 3,
+                    "impression": "",
+                    "memory": [],
+                }
+            )
+        ]
+    )
+    s2 = FakeChatModel(script=[json.dumps({"messages": ["ok"]})])
+    await _handle_and_send(
+        chat_id, _SENSITIVE_USER_TEXT, bot, s1_model=s1, s2_model=s2, sleeper=_nosleep
+    )
+
+
+async def test_log_default_does_not_leak_user_text_or_inner_voice(
+    data_root: Path, capsys: Any, monkeypatch: Any
+) -> None:
+    """默认(无 WREN_DEBUG_RAW_LOGS):stdout 必须不含 raw user_text / inner_voice /
+    raw chat_id。否则 /delete 的 "wipe everything" 承诺站不住(#20)。
+    """
+    monkeypatch.delenv("WREN_DEBUG_RAW_LOGS", raising=False)
+    await _send_one_turn_with_sensitive_content(888, data_root)
+    captured = capsys.readouterr().out
+    assert _SENSITIVE_USER_TEXT not in captured, "raw user_text 不应进默认日志"
+    assert _SENSITIVE_MONOLOGUE not in captured, "raw inner_voice 不应进默认日志"
+    assert "[888]" not in captured, "raw chat_id 不应进默认日志(用 chash 替代)"
+    # 仍要有结构化指标可供运维 tail
+    assert "user_len=" in captured
+    assert "iv_len=" in captured
+    assert "replied=True" in captured
+    assert "bubbles=1" in captured
+
+
+async def test_log_debug_mode_outputs_raw_content(
+    data_root: Path, capsys: Any, monkeypatch: Any
+) -> None:
+    """WREN_DEBUG_RAW_LOGS=1 时,本地排障可看 raw 内容(只在显式开关下)。"""
+    monkeypatch.setenv("WREN_DEBUG_RAW_LOGS", "1")
+    await _send_one_turn_with_sensitive_content(889, data_root)
+    captured = capsys.readouterr().out
+    assert _SENSITIVE_USER_TEXT in captured
+    assert _SENSITIVE_MONOLOGUE in captured
+    assert "[889]" in captured  # debug 模式可见 raw chat_id
+    assert "raw-logs(debug)" in captured  # 警示前缀
+
+
+def test_log_chat_hash_is_stable_and_not_raw_id() -> None:
+    """chash 跨调用稳定 + 8 hex 形态;不是 raw chat_id;独立于 metrics chat_hash
+    (后者依赖 WREN_METRICS_SALT,缺 salt 会 raise —— 不能让 bot 因日志挂)。"""
+    from wren.bot.handlers import _log_chat_hash
+
+    h1 = _log_chat_hash(12345)
+    h2 = _log_chat_hash(12345)
+    h3 = _log_chat_hash(99999)
+    assert h1 == h2  # 稳定
+    assert h1 != h3  # 不同 id → 不同 hash
+    assert len(h1) == 8 and all(c in "0123456789abcdef" for c in h1)  # 8 hex
+    assert "12345" not in h1  # 不暴露 raw id

@@ -44,7 +44,11 @@ impression, selected_memory, event_stored, tokens, latency_ms, model}`、`step2|
 
 ## /delete(D1.4)
 `UserStore.delete()` 清整个 `data/users/{chat_id}/`(含两条 jsonl);监测 DB 的对应行由
-`wren-metrics forget`(W6)按 `chat_hash` 删除。
+`wren-metrics forget`(W6)按 `chat_hash` 删除。**bot 默认日志(stdout / Docker logs)
+脱敏**:只输出 `chash` + 字段长度 + replied / delay / bubble_count,不含 raw user_text /
+inner_voice / bubbles —— 让 `/delete` 的 "wipe everything" 承诺站得住(#20)。
+`WREN_DEBUG_RAW_LOGS=1` 才会输出原文(本地排障用,生产绝不开;打开后产生的日志
+不会被 `/delete` 清理)。
 
 ## 监测 DuckDB 分析层
 只读消费 trace/settlement → `data/metrics.duckdb`(只存指标+维度,**绝不存原文**;`chat_id` 哈希存)。
