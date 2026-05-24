@@ -10,6 +10,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from wren.bot.scheduler import _recently_active, proactive_tick, register_proactive
 from wren.core.clock import MockClock, iso_z
 from wren.core.storage import Relationship, UserStore
@@ -117,3 +119,114 @@ def test_register_proactive_no_jobqueue() -> None:
     app = MagicMock()
     app.job_queue = None
     assert register_proactive(app) is False
+
+
+# === #49:proactive race(pre-lock guard 与 lock 获取之间用户 turn 抢进)===
+
+
+async def test_proactive_tick_skips_when_debounce_appears_during_gap(
+    data_root: Path, world_root: Path
+) -> None:
+    """#49 核心:pre-lock 时 `jq.get_jobs_by_name` 返 [](无 debounce)→ 通过;
+    进 lock 后再次 check `jq.get_jobs_by_name` 返 [obj](reactive 刚注册了 debounce)
+    → inside-lock recheck 让路,**不发** proactive 也不 mark/不 bump。
+    """
+    from wren.bot.scheduler import proactive_tick
+    from wren.core.trace import read_traces
+
+    _seed_world(world_root)
+    store = _lv3_user()
+    cid = "12345"  # noqa: F841 - keep for readability
+
+    context = MagicMock()
+    context.bot.send_message = AsyncMock()
+    context.bot.send_chat_action = AsyncMock()
+    # 第 1 次 [] = pre-lock 通过;第 2 次 [object()] = inside-lock 让路
+    context.job_queue.get_jobs_by_name = MagicMock(side_effect=[[], [object()]])
+
+    n = await proactive_tick(context, clock=MockClock(_NOW), **_models())
+    assert n == 0, "inside-lock 检测到 debounce 应让路(#49)"
+    traces = read_traces(store.dir)
+    assert not any(t.get("kind") == "proactive" for t in traces), (
+        "race 让路时不该写 proactive trace"
+    )
+    assert store.read_proactive_state().day_count == 0, "race 让路时不该 bump 预算"
+
+
+async def test_proactive_tick_skips_when_recent_trace_appears_in_gap(
+    data_root: Path, world_root: Path
+) -> None:
+    """#49 双层:pre-lock 无近期 trace → 通过;在 lock 获取前 reactive turn 刚
+    flush + 写 trace → inside-lock 重读 store 时 _recently_active=True → 让路。
+
+    用 monkeypatch 替换 _chat_lock:获取锁前注入一条 trace 模拟 race gap。
+    """
+    from wren.bot.scheduler import proactive_tick
+    from wren.core.trace import read_traces, trace_path
+
+    _seed_world(world_root)
+    store = _lv3_user()
+    cid = "12345"
+
+    context = MagicMock()
+    context.bot.send_message = AsyncMock()
+    context.bot.send_chat_action = AsyncMock()
+    context.job_queue.get_jobs_by_name = MagicMock(return_value=[])
+
+    import wren.bot.scheduler as sched_mod
+
+    original_lock = sched_mod._chat_lock
+    written = {"v": False}
+
+    def lock_with_race(cid_int):  # type: ignore[no-untyped-def]
+        if not written["v"]:
+            with trace_path(store.dir).open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"chat_id": cid, "ts": iso_z(_NOW)}) + "\n")
+            written["v"] = True
+        return original_lock(cid_int)
+
+    sched_mod._chat_lock = lock_with_race  # type: ignore[assignment]
+    try:
+        n = await proactive_tick(context, clock=MockClock(_NOW), **_models())
+    finally:
+        sched_mod._chat_lock = original_lock  # type: ignore[assignment]
+
+    assert n == 0, "inside-lock 检测到近期 trace 应让路(#49)"
+    traces = read_traces(store.dir)
+    assert len(traces) == 1, "只该有我们注入那 1 条 race trace,没 proactive 写"
+    assert traces[0].get("kind") != "proactive"
+    assert store.read_proactive_state().day_count == 0
+
+
+async def test_proactive_tick_race_skip_does_not_consume_daily_cap(
+    data_root: Path, world_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#49 reviewer-requested:race-skip 路径**不该**消耗 daily turn cap。
+
+    旧代码 turn_blocked() 在 _chat_lock 之前调,inside-lock skip 时已经吃了 cap;
+    虽然没发气泡 / 没写 trace / 没 bump proactive count,但 cap 计数被烧 ——
+    导致那一天的 cost guard 短少。
+    """
+    from wren.bot import limits
+
+    _seed_world(world_root)
+    _lv3_user()
+
+    # 重置 limits 全局状态(避免之前测试遗留),设 cap=2(够 2 次)
+    limits._turn_day = ""  # type: ignore[attr-defined]
+    limits._turn_count = 0  # type: ignore[attr-defined]
+    monkeypatch.setenv("WREN_DAILY_TURN_CAP", "2")
+    monkeypatch.setenv("WREN_DAILY_CAP_HARD", "1")
+
+    # 模拟 race:pre-lock 过,inside-lock fire(jq 第 2 次返非空)
+    context = MagicMock()
+    context.bot.send_message = AsyncMock()
+    context.bot.send_chat_action = AsyncMock()
+    context.job_queue.get_jobs_by_name = MagicMock(side_effect=[[], [object()]])
+
+    n = await proactive_tick(context, clock=MockClock(_NOW), **_models())
+    assert n == 0, "race-skip 应该不发"
+    # 关键:cap 计数还是 0(没被消耗)
+    assert limits._turn_count == 0, (  # type: ignore[attr-defined]
+        f"race-skip 路径**不该**消耗 cap;实际 _turn_count={limits._turn_count}"  # type: ignore[attr-defined]
+    )

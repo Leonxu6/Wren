@@ -126,7 +126,8 @@ async def proactive_tick(
             store = UserStore(chat_id)
             if not store.exists():
                 continue
-            # 护栏:用户正在对话(pending debounce)/ 最近有过 trace → 让路,别插嘴
+            # 护栏 1(pre-lock 快筛):用户正在对话 / 最近活跃 → 跳过整个 chat,
+            # 省下进 lock + 重新 read store 的开销
             if jq is not None and jq.get_jobs_by_name(f"debounce-{chat_id}"):
                 continue
             if _recently_active(store, now):
@@ -138,16 +139,36 @@ async def proactive_tick(
             beat = decision.beat
             if beat is None:
                 continue
-            if turn_blocked():  # 成本天花板:主动消息也计入(优先级低于反应轮)
-                break
-            async with _chat_lock(cid):  # 与 on_message 串行,气泡不交错
+            # 护栏 2(inside-lock 再确认,#49):pre-lock 检查与 lock 获取之间,
+            # 若 reactive turn 抢先持锁 + 触新 debounce job + 写 trace → 此时
+            # **同 chat 实际正在对话**,proactive 还按 stale 状态发就是"插嘴"。
+            # 进锁后重新 read store + jq,任一新护栏 fire → 退出,不发不 mark/不 bump cap。
+            async with _chat_lock(cid):
+                if jq is not None and jq.get_jobs_by_name(f"debounce-{chat_id}"):
+                    continue  # reactive turn 刚进 debounce → 让路
+                fresh_now = clk.now()
+                if _recently_active(store, fresh_now):
+                    continue  # reactive turn 刚 flush 写了 trace → 让路
+                # 重读 proactive_state + relationship + 重判 due beat(都可能在 gap 中变)
+                fresh_level = store.read_relationship().level
+                fresh_decision = scan_for_due_beat(
+                    fresh_now, beats, fresh_level,
+                    store.read_proactive_state(), tier=store.read_tier(),
+                )
+                if fresh_decision.beat is None:
+                    continue  # gap 中 beat 已被别的路径 mark 或 budget 用尽
+                # cost cap(#49 reviewer 指出):必须在所有 inside-lock skip 路径**之后**才 bump,
+                # 否则 race-skip 也会消耗每日 cap,虽然没发气泡/没写 trace。
+                if turn_blocked():
+                    break
+                beat = fresh_decision.beat
                 outcome = await asyncio.to_thread(
                     handle_proactive_turn, chat_id, beat, store, s1, s2, clock=clk, world=world
                 )
-                store.mark_considered(now, beat_fingerprint(beat))
+                store.mark_considered(fresh_now, beat_fingerprint(beat))
                 _log_turn(cid, f"[proactive] {beat.intent}", outcome)
                 if outcome.replied and outcome.bubbles:
-                    store.bump_proactive_count(now)
+                    store.bump_proactive_count(fresh_now)
                     await send_bubbles(
                         context.bot, cid, outcome.bubbles, outcome.typing_ms, outcome.bubble_gaps_ms
                     )
