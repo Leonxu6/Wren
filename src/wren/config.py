@@ -191,7 +191,7 @@ def rate_limit_per_min() -> int:
 
 
 def daily_turn_cap() -> int:
-    """全局每日 turn(LLM 调用)上限,成本护栏。0 = 不限(默认)。开放链接建议设值(运维 runbook)。"""
+    """全局每日 LLM complete() 调用上限,成本护栏。0 = 不限(默认)。开放链接建议设值。"""
     return int(os.getenv("WREN_DAILY_TURN_CAP", "0"))
 
 

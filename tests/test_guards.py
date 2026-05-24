@@ -12,6 +12,8 @@ import pytest
 from wren.bot import limits
 from wren.bot.handlers import cmd_setlevel, cmd_tick
 from wren.core.storage import UserStore
+from wren.model.base import ChatMessage
+from wren.model.registry import get_model
 
 
 # ---- 调试命令 owner 鉴权(公开发布:非 owner 一句话跳 Lv6 = 绕过整个产品魂)----
@@ -72,31 +74,45 @@ def test_rate_limit_isolated_per_user(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ---- 全局每日成本天花板 ----
-def test_daily_cap_hard_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_daily_model_call_cap_hard_stop(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WREN_DAILY_TURN_CAP", "2")
     monkeypatch.setenv("WREN_DAILY_CAP_HARD", "1")
-    limits._turn_day, limits._turn_count = "", 0
+    limits._model_call_day, limits._model_call_count = "", 0
     now = datetime(2026, 5, 22, tzinfo=UTC)
-    assert not limits.turn_blocked(now=now)  # 1
-    assert not limits.turn_blocked(now=now)  # 2(达上限那条仍跑)
-    assert limits.turn_blocked(now=now)  # 3 → 硬停
+    assert not limits.register_model_call(now=now)  # 1
+    assert not limits.register_model_call(now=now)  # 2(达上限那次仍跑)
+    assert limits.register_model_call(now=now)  # 3 → 硬停
 
 
-def test_daily_cap_alert_only(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_daily_model_call_cap_alert_only(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WREN_DAILY_TURN_CAP", "1")
     monkeypatch.delenv("WREN_DAILY_CAP_HARD", raising=False)  # 非硬停
-    limits._turn_day, limits._turn_count = "", 0
+    limits._model_call_day, limits._model_call_count = "", 0
     now = datetime(2026, 5, 22, tzinfo=UTC)
-    assert not limits.turn_blocked(now=now)
-    assert not limits.turn_blocked(now=now)  # 超了也只告警、继续服务
+    assert not limits.register_model_call(now=now)
+    assert not limits.register_model_call(now=now)  # 超了也只告警、继续服务
 
 
-def test_daily_cap_rolls_over_midnight(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_daily_model_call_cap_rolls_over_midnight(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WREN_DAILY_TURN_CAP", "1")
     monkeypatch.setenv("WREN_DAILY_CAP_HARD", "1")
-    limits._turn_day, limits._turn_count = "", 0
+    limits._model_call_day, limits._model_call_count = "", 0
     d1 = datetime(2026, 5, 22, tzinfo=UTC)
     d2 = datetime(2026, 5, 23, tzinfo=UTC)
-    assert not limits.turn_blocked(now=d1)
-    assert limits.turn_blocked(now=d1)  # 同日超限
-    assert not limits.turn_blocked(now=d2)  # 跨日重置
+    assert not limits.register_model_call(now=d1)
+    assert limits.register_model_call(now=d1)  # 同日超限
+    assert not limits.register_model_call(now=d2)  # 跨日重置
+
+
+def test_get_model_enforces_cap_per_complete(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WREN_FAKE_MODEL", "1")
+    monkeypatch.setenv("WREN_DAILY_TURN_CAP", "1")
+    monkeypatch.setenv("WREN_DAILY_CAP_HARD", "1")
+    limits._model_call_day, limits._model_call_count = "", 0
+
+    model = get_model("step1")
+    msgs = [ChatMessage(role="user", content="hi")]
+
+    model.complete(msgs)
+    with pytest.raises(RuntimeError, match="daily LLM call cap"):
+        model.complete(msgs)

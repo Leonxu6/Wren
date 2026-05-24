@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from wren.bot import limits
 from wren.bot.scheduler import _recently_active, proactive_tick, register_proactive
 from wren.core.clock import MockClock, iso_z
 from wren.core.storage import Relationship, UserStore
@@ -96,6 +97,24 @@ async def test_proactive_tick_skips_free_tier(data_root: Path, world_root: Path)
     store.write_tier("free")  # 免费档:无主动消息(订阅 seam 短路成 0)
     n = await proactive_tick(_ctx(), clock=MockClock(_NOW), **_models())
     assert n == 0
+
+
+async def test_proactive_tick_cap_exhausted_skips_world_model(
+    data_root: Path, world_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("WREN_DAILY_TURN_CAP", "1")
+    monkeypatch.setenv("WREN_DAILY_CAP_HARD", "1")
+    limits._model_call_day, limits._model_call_count = "", 0
+    assert not limits.register_model_call(now=_NOW)
+    _lv3_user()
+    models = _models()
+    world_model = FakeChatModel(script=["should not be called"])
+    models["world_model"] = world_model
+
+    n = await proactive_tick(_ctx(), clock=MockClock(_NOW), **models)
+
+    assert n == 0
+    assert world_model.calls == []
 
 
 def test_recently_active(data_root: Path) -> None:
@@ -201,7 +220,7 @@ async def test_proactive_tick_skips_when_recent_trace_appears_in_gap(
 async def test_proactive_tick_race_skip_does_not_consume_daily_cap(
     data_root: Path, world_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#49 reviewer-requested:race-skip 路径**不该**消耗 daily turn cap。
+    """#49/#50:race-skip 路径**不该**消耗 daily model-call cap。
 
     旧代码 turn_blocked() 在 _chat_lock 之前调,inside-lock skip 时已经吃了 cap;
     虽然没发气泡 / 没写 trace / 没 bump proactive count,但 cap 计数被烧 ——
@@ -213,8 +232,8 @@ async def test_proactive_tick_race_skip_does_not_consume_daily_cap(
     _lv3_user()
 
     # 重置 limits 全局状态(避免之前测试遗留),设 cap=2(够 2 次)
-    limits._turn_day = ""  # type: ignore[attr-defined]
-    limits._turn_count = 0  # type: ignore[attr-defined]
+    limits._model_call_day = ""
+    limits._model_call_count = 0
     monkeypatch.setenv("WREN_DAILY_TURN_CAP", "2")
     monkeypatch.setenv("WREN_DAILY_CAP_HARD", "1")
 
@@ -226,7 +245,7 @@ async def test_proactive_tick_race_skip_does_not_consume_daily_cap(
 
     n = await proactive_tick(context, clock=MockClock(_NOW), **_models())
     assert n == 0, "race-skip 应该不发"
-    # 关键:cap 计数还是 0(没被消耗)
-    assert limits._turn_count == 0, (  # type: ignore[attr-defined]
-        f"race-skip 路径**不该**消耗 cap;实际 _turn_count={limits._turn_count}"  # type: ignore[attr-defined]
+    # 关键:cap 计数还是 0(没发起任何 LLM complete)
+    assert limits._model_call_count == 0, (
+        f"race-skip 路径**不该**消耗 cap;实际 _model_call_count={limits._model_call_count}"
     )
