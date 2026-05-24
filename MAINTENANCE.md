@@ -202,7 +202,7 @@ git push origin main
 
 ## 5. 一键部署脚本
 
-仓库根 `scripts/deploy.sh`（如已存在直接用，否则按场景 A/B/D 手敲；推荐第一次进项目就把它创出来）：
+仓库根 `scripts/deploy.sh`(已 commit,以仓库版本为准;以下是当前形态):
 
 ```bash
 #!/usr/bin/env bash
@@ -210,30 +210,37 @@ git push origin main
 set -e
 SERVICE="${1:-bot}"
 
-cd /Users/leon/project/HERR
+cd "$(dirname "$0")/.."   # 走到仓库根
+
 echo "== 1) 本机离线门 =="
 WREN_FAKE_MODEL=1 uv run pytest -q
 uv run ruff check . > /dev/null
 uv run mypy src > /dev/null
 
-echo "== 2) rsync → VPS =="
-rsync -az --exclude data/ --exclude world/today.md --exclude world/yesterday.md \
-  --exclude '*.duckdb*' --exclude '__pycache__/' --exclude '.venv/' \
-  --exclude '.env.bak.*' --exclude '*.vps' --exclude '.claude/' \
-  -e "ssh -p 62769" \
-  /Users/leon/project/HERR/ root@104.233.146.220:/srv/wren/
+echo "== 2) 打包 git HEAD → rsync VPS =="
+# Fail-safe allowlist:只上传 git HEAD 跟踪的文件(`git archive`)。
+# .env / .git / 未跟踪 recap 素材 / plan.md / WIP 自然进不去(#13)。
+# Working tree 有 modified tracked 文件 → fail(否则本地改动 vs 部署内容会对不上)。
+if ! git diff --quiet HEAD; then
+  echo "  ✗ working tree dirty —— commit 后再 deploy" >&2
+  exit 1
+fi
+STAGE=$(mktemp -d); trap 'rm -rf "$STAGE"' EXIT
+git archive HEAD | tar -x -C "$STAGE"
+rsync -az -e "ssh -p 62769" "$STAGE"/ root@104.233.146.220:/srv/wren/
 
 echo "== 3) rebuild + restart =="
-if [ "$SERVICE" = "all" ]; then
-  ssh -p 62769 root@104.233.146.220 'cd /srv/wren && docker compose up -d --build'
-else
-  ssh -p 62769 root@104.233.146.220 "cd /srv/wren && docker compose up -d --build $SERVICE"
-fi
+ssh -p 62769 root@104.233.146.220 "cd /srv/wren && docker compose up -d --build $SERVICE"
 
 echo "== 4) tail logs =="
 sleep 4
 ssh -p 62769 root@104.233.146.220 "cd /srv/wren && docker compose logs --tail=20 $SERVICE"
 ```
+
+**为什么是 git archive 而不是 `rsync ./` + exclude(#13)**:
+- exclude opt-out 永远会漏新出现的 WIP 目录(本地一个未跟踪 recap 素材包就 ~29M 一起推上去)
+- `git archive HEAD` 是 allowlist by construction:**只有 git 里跟踪的文件能上 VPS**
+- `.env` / `.git/` / `data/users/` / 未跟踪素材 / plan/log WIP —— 都自然不会被打进 archive
 
 ---
 
