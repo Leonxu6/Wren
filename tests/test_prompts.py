@@ -84,3 +84,116 @@ def test_level_fact_is_not_a_tone_dial() -> None:
 
 def test_sweetie_baseline_is_distinct() -> None:
     assert "sweet, warm" in build_sweetie_baseline_prompt()
+
+
+# === #30:严格 coercion helpers + parser hardening(Leon unblock strictly scoped)===
+
+
+def test_strict_bool_rejects_python_truthiness_trap() -> None:
+    """`bool("false") == True` Python 真值陷阱 → strict_bool 必须返 False(#30)。"""
+    from wren.prompts.jsonio import strict_bool
+
+    assert strict_bool(True, default=False) is True
+    assert strict_bool(False, default=True) is False
+    # 显式 string "true"/"false"(case-insensitive)
+    assert strict_bool("true", default=False) is True
+    assert strict_bool("True", default=False) is True
+    assert strict_bool("FALSE", default=True) is False
+    assert strict_bool("false", default=True) is False
+    # 其它 string 都走 default,不再走 bool() 真值
+    assert strict_bool("maybe", default=False) is False
+    assert strict_bool("maybe", default=True) is True
+    assert strict_bool("1", default=False) is False  # 不当 True
+    assert strict_bool("", default=True) is True
+    # None / int → default
+    assert strict_bool(None, default=True) is True
+    assert strict_bool(1, default=False) is False
+
+
+def test_safe_int_handles_garbage_without_crashing() -> None:
+    """`int("soon")` ValueError 让 turn 崩 → safe_int 返 default(#30)。"""
+    from wren.prompts.jsonio import safe_int
+
+    assert safe_int(5) == 5
+    assert safe_int("10") == 10
+    assert safe_int(3.7) == 3  # float 截尾
+    assert safe_int("soon", default=0) == 0  # 关键:非数字 string 不崩
+    assert safe_int("soon", default=42) == 42
+    assert safe_int(None, default=7) == 7
+    # bool 显式拒绝(防 True == 1 静默通过)
+    assert safe_int(True, default=99) == 99
+    assert safe_int(False, default=99) == 99
+    # clamp
+    assert safe_int(-5, default=0, lo=0) == 0
+    assert safe_int(9999, default=0, hi=600) == 600
+    assert safe_int("0", lo=0, hi=600) == 0
+
+
+def test_safe_list_of_str_rejects_string_iteration_trap() -> None:
+    """`for m in "foo"` 按字符迭代 string → safe_list_of_str 当 str 为 [](#30)。"""
+    from wren.prompts.jsonio import safe_list_of_str
+
+    assert safe_list_of_str(["a", "b"]) == ["a", "b"]
+    assert safe_list_of_str([" a ", "", "b"]) == ["a", "b"]
+    # 关键:string 不能按字符当 list
+    assert safe_list_of_str("foo") == []  # 不是 ["f", "o", "o"]
+    assert safe_list_of_str(None) == []
+    assert safe_list_of_str(42) == []
+    assert safe_list_of_str(["a", "b", "c"], cap=2) == ["a", "b"]
+
+
+def test_parse_step1_reply_string_false_treated_as_false() -> None:
+    """#30 端到端:LLM 给 `"reply": "false"` → parse_step1 必须返 False,不能 True。"""
+    from wren.prompts.step1 import parse_step1
+
+    p = parse_step1('{"reply": "false", "monologue": "x"}')
+    assert p["reply"] is False
+    p2 = parse_step1('{"reply": "true", "monologue": "x"}')
+    assert p2["reply"] is True
+
+
+def test_parse_step1_delay_s_non_number_falls_back() -> None:
+    """#30 端到端:`"delay_s": "soon"` → 不崩,delay_s=0。"""
+    from wren.prompts.step1 import parse_step1
+
+    p = parse_step1('{"delay_s": "soon", "monologue": "x"}')
+    assert p["delay_s"] == 0
+    assert parse_step1('{"delay_s": "5", "monologue": "x"}')["delay_s"] == 5
+    assert parse_step1('{"delay_s": 99999, "monologue": "x"}')["delay_s"] == 600
+
+
+def test_parse_step1_memory_string_not_iterated_by_char() -> None:
+    """#30 端到端:`"memory": "foo"` → [],不是 ['f','o','o']。"""
+    from wren.prompts.step1 import parse_step1
+
+    p = parse_step1('{"memory": "foo", "monologue": "x"}')
+    assert p["memory"] == []
+    p2 = parse_step1('{"memory": ["bar", "baz"], "monologue": "x"}')
+    assert p2["memory"] == ["bar"]  # cap=1
+
+
+def test_parse_settlement_freeze_string_false_treated_as_false() -> None:
+    """#30 端到端:`"freeze": "false"` → False,不是 True。"""
+    from wren.prompts.settlement import parse_settlement
+
+    p = parse_settlement('{"level": 2, "freeze": "false", "prose": "x"}')
+    assert p["freeze"] is False
+    p2 = parse_settlement('{"level": 2, "freeze": "true", "prose": "x"}')
+    assert p2["freeze"] is True
+    # 缺 freeze → None(由 settle_nightly 回退旧值)
+    p3 = parse_settlement('{"level": 2, "prose": "x"}')
+    assert p3["freeze"] is None
+
+
+def test_parse_settlement_non_numeric_level_does_not_become_zero() -> None:
+    """#30 + #29:bad level 不能被 clamp 成 0;全关键字段失败时 parse_ok=False。"""
+    from wren.prompts.settlement import parse_settlement
+
+    p = parse_settlement('{"level": "soon", "freeze": "false"}')
+    assert p["level"] is None
+    assert p["freeze"] is False
+    assert p["parse_ok"] is False
+
+    p2 = parse_settlement('{"level": "soon", "prose": "still thinking"}')
+    assert p2["level"] is None
+    assert p2["parse_ok"] is True

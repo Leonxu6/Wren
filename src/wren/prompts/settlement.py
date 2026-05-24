@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..model.base import ChatMessage
-from .jsonio import loads_lenient
+from .jsonio import loads_lenient, safe_int, safe_list_of_str, strict_bool
 from .system import build_wren_system_prompt
 
 # level 阶梯 = gate-key 含义(对齐 step2.level_fact / PRD §8);给结算一把共享的尺。
@@ -90,33 +90,40 @@ def build_settlement_messages(
 
 
 def parse_settlement(text: str) -> dict[str, Any]:
-    """解析结算输出。缺字段 / 解析失败 → 该字段 None,由 settle_nightly 决定保留或回退。
+    """解析结算输出。
 
-    返回 `parse_ok`:**至少一个**有意义字段(level/prose/core 任一非 None)→ True;
-    全 None(空字符串 / 截断 JSON / 全 schema 缺失)→ False。
-    settle_nightly 看 parse_ok=False 时**保留** impressions / relationship,让明晚 retry(#29)。
+    #29:返回 `parse_ok`:**至少一个**有意义字段(level/prose/core 任一非 None)→ True;
+    全 None(空字符串 / 截断 JSON / 全 schema 缺失)→ False。settle_nightly 看
+    parse_ok=False 时**保留** impressions / relationship,让明晚 retry。
 
-    level 钳在合法域 0-6;**不**在 fallback 路径里基于 raw_out 内容做 cue/keyword 分流(#29)。
+    #30:严格 coerce:
+    - `level`:safe_int clamp 0-6;非数字 → None(由 settle_nightly 回退旧值)
+    - `freeze`:strict_bool(防 `bool("false") == True` 真值陷阱);**显式缺**字段 → None
+    - `unresolved`:safe_list_of_str(非 list,包括 str,→ [])
     """
     data = loads_lenient(text)
 
     level: int | None = None
     if data.get("level") is not None:
-        try:
-            level = max(0, min(6, int(data["level"])))
-        except (TypeError, ValueError):
-            level = None
+        level_raw = safe_int(data["level"], default=-1)
+        if level_raw != -1:
+            level = max(0, min(6, level_raw))
 
-    freeze: bool | None = bool(data["freeze"]) if data.get("freeze") is not None else None
+    freeze: bool | None = (
+        strict_bool(data["freeze"], default=False) if "freeze" in data and data["freeze"] is not None
+        else None
+    )
     prose = str(data.get("prose", "")).strip() or None
     core = str(data.get("core", "")).strip() or None
 
-    unresolved: list[str] | None = None
-    if "unresolved" in data:
-        raw = data["unresolved"] or []
-        if not isinstance(raw, list):
-            raw = [raw]
-        unresolved = [str(u).strip() for u in raw if str(u).strip()]
+    unresolved: list[str] | None = (
+        safe_list_of_str(data["unresolved"]) if "unresolved" in data else None
+    )
+    # 兼容老语义:single string → wrap 成 list(LLM 偶尔给单条 string)
+    if "unresolved" in data and not isinstance(data["unresolved"], list):
+        raw = data["unresolved"]
+        if isinstance(raw, str) and raw.strip():
+            unresolved = [raw.strip()]
 
     # parse_ok = level/prose/core 任一有意义即可(freeze/unresolved 都是辅助,缺失也可)
     parse_ok = level is not None or prose is not None or core is not None

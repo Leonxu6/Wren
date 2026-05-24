@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..model.base import ChatMessage
-from .jsonio import loads_lenient
+from .jsonio import loads_lenient, safe_int, safe_list_of_str, strict_bool
 from .system import build_wren_system_prompt
 
 _STEP1_INSTRUCTION = """\
@@ -112,15 +112,18 @@ def _parse_event(raw: Any) -> dict[str, str] | None:
 
 
 def parse_step1(text: str) -> dict[str, Any]:
+    """严格 coerce(#30):
+    - `reply` 走 strict_bool(防 `bool("false") == True` 真值陷阱)
+    - `delay_s` 走 safe_int + clamp [0, 600](防 `int("soon")` 让 turn 崩 + 防离谱大数)
+    - `memory` 走 safe_list_of_str(防 `for m in "foo"` 按字符迭代字符串)
+    """
     data = loads_lenient(text)
     impression_raw = str(data.get("impression", "")).strip()
-    memory_raw = data.get("memory") or []
-    memory = [str(m).strip() for m in memory_raw if str(m).strip()][:1]
     return {
         "monologue": str(data.get("monologue", "")).strip(),
-        "reply": bool(data.get("reply", True)),
-        "delay_s": int(data.get("delay_s", 0) or 0),
+        "reply": strict_bool(data.get("reply"), default=True),
+        "delay_s": safe_int(data.get("delay_s"), default=0, lo=0, hi=600),
         "impression": impression_raw or None,
-        "memory": memory,
+        "memory": safe_list_of_str(data.get("memory"), cap=1),
         "event": _parse_event(data.get("event")),
     }
