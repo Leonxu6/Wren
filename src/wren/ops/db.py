@@ -71,7 +71,36 @@ def create_schema(con: duckdb.DuckDBPyConnection) -> None:
     con.execute(_SCHEMA)  # DuckDB 解析多语句脚本 + 正确忽略 -- 注释(勿在 Python 端按 ; 裸切)
 
 
+_DEV_SALT = "wren-dev-salt"  # 源码公开常量 —— **必须**配合 WREN_ALLOW_DEV_METRICS_SALT=1 才可用
+
+
+def require_metrics_salt() -> str:
+    """返回 metrics 用的 salt;不许 silent fallback(#11)。
+
+    解析顺序:
+    1. `WREN_METRICS_SALT` 非空 → 用它(正常 prod / 真实部署)
+    2. 否则 `WREN_ALLOW_DEV_METRICS_SALT=1` → 用源码 `_DEV_SALT`(本地 / CI / 测试)
+    3. 否则 raise RuntimeError(fail fast,绝不写出可反推的 chat_hash)
+
+    源码默认盐是公开的,任何用它生成的 metrics DB **不可公开发布**(#11、RUNBOOK Release Gate)。
+    """
+    salt = os.getenv("WREN_METRICS_SALT", "").strip()
+    if salt:
+        return salt
+    if os.getenv("WREN_ALLOW_DEV_METRICS_SALT", "").strip() == "1":
+        return _DEV_SALT
+    raise RuntimeError(
+        "WREN_METRICS_SALT 未设。公开发布前必须设一个随机 salt "
+        "(见 docs/RUNBOOK.md Release Gate);本地 / CI / 测试用源码默认盐请显式 "
+        "WREN_ALLOW_DEV_METRICS_SALT=1。不允许 silent fallback —— "
+        "源码盐生成的 chat_hash 可被反推(#11)。"
+    )
+
+
 def chat_hash(chat_id: str) -> str:
-    """sha256(salt + chat_id) 前 16 hex。salt 走 WREN_METRICS_SALT(勿提交);默认 dev salt 仅本地。"""
-    salt = os.getenv("WREN_METRICS_SALT", "wren-dev-salt")
+    """sha256(salt + chat_id) 前 16 hex。salt 见 `require_metrics_salt()`。
+
+    缺 salt 且未启用 dev override → raise,不写出可反推的哈希。
+    """
+    salt = require_metrics_salt()
     return hashlib.sha256(f"{salt}:{chat_id}".encode()).hexdigest()[:16]
