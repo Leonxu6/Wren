@@ -280,10 +280,13 @@ ssh -p 62769 root@104.233.146.220 \
      -pass env:WREN_BACKUP_PASSPHRASE \
      -in /srv/wren-backups/wren-<TS>.tgz.age -out /tmp/wren-<TS>.tgz'
 
-# 3) **必须先停服**(否则 live 写入与恢复交错 → 半新半旧,#27)
+# 3) 演练:默认 staging,解到 tmp 核对(不碰 live)
+ssh -p 62769 root@104.233.146.220 'bash /srv/wren/scripts/restore.sh /tmp/wren-<TS>.tgz --staging /tmp/restore-check'
+
+# 4) **必须先停服**(否则 live 写入与恢复交错 → 半新半旧,#27)
 ssh -p 62769 root@104.233.146.220 'cd /srv/wren && docker compose stop bot metrics viewer'
 
-# 4) 真要恢复 live(/srv/wren):
+# 5) 真要恢复 live(/srv/wren):
 ssh -p 62769 root@104.233.146.220 \
   'bash /srv/wren/scripts/restore.sh /tmp/wren-<TS>.tgz --live && rm /tmp/wren-<TS>.tgz'
 ssh -p 62769 root@104.233.146.220 'cd /srv/wren && docker compose up -d --build && docker compose logs --tail=20 bot'
