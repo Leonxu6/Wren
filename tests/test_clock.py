@@ -50,3 +50,46 @@ def test_injected_clock_drives_trace_ts(data_root: Path) -> None:
     clock = MockClock(datetime(2026, 5, 20, 2, 15, tzinfo=UTC))
     handle_turn("clk1", "you up", s, FakeChatModel(script=[_S1]), FakeChatModel(script=[_S2]), clock=clock)
     assert read_traces(s.dir)[0]["ts"] == "2026-05-20T02:15:00Z"
+
+
+# === #32:SystemClock 必须是 ET wall-clock(Wren 锚定 Brooklyn / America/New_York)===
+
+
+def test_system_clock_returns_et_not_utc() -> None:
+    """#32 核心:SystemClock.now() 必须返回 America/New_York 的 tz-aware datetime,
+    不是 UTC。否则 Step1 `now` / world date / proactive 窗口都按 UTC 偏 4-5h。"""
+    from zoneinfo import ZoneInfo
+
+    now = SystemClock().now()
+    assert now.tzinfo is not None, "必须 tz-aware"
+    assert now.tzinfo == ZoneInfo("America/New_York"), (
+        f"SystemClock 必须返 ET,实际 {now.tzinfo}(#32)"
+    )
+    # ET 偏移 -4h(DST)或 -5h(EST);**绝不是 0**(UTC)
+    offset = now.utcoffset()
+    assert offset is not None
+    assert offset.total_seconds() != 0, "SystemClock 不该是 UTC(offset=0)"
+    assert offset.total_seconds() in (-4 * 3600, -5 * 3600), (
+        f"ET 偏移应为 -4h(DST)或 -5h(EST),实际 {offset}"
+    )
+
+
+def test_iso_z_still_normalizes_et_to_utc() -> None:
+    """回归:`iso_z()` 应仍把 ET 时间转 UTC 后写成 `Z` 格式(trace 时间面不变)。
+
+    DST 期间:2026-05-20 ET 22:00 = UTC 02:00 次日 → `2026-05-21T02:00:00Z`。
+    """
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    dt_et = datetime(2026, 5, 20, 22, 0, tzinfo=et)
+    assert iso_z(dt_et) == "2026-05-21T02:00:00Z"
+
+
+def test_system_clock_and_utc_now_same_instant() -> None:
+    """sanity:ET 和 UTC 是同一瞬间,只是 tzinfo 不同。`astimezone(UTC)` 后必须
+    与 `datetime.now(UTC)` 在几秒内吻合(防 SystemClock 偷偷拿了别的 wall-clock)。"""
+    sys_now = SystemClock().now()
+    utc_now = datetime.now(UTC)
+    diff_s = abs((sys_now.astimezone(UTC) - utc_now).total_seconds())
+    assert diff_s < 5, f"SystemClock 与 UTC now 同瞬间(astimezone 后),实际差 {diff_s}s"
