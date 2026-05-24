@@ -83,7 +83,9 @@
 ├── .env                    # secrets(chmod 600)
 └── scripts/backup.sh       # 备份脚本(cron 自动调)
 
-/srv/wren-backups/          # 备份归档(.tgz, 保留 14 份, cron 每日 UTC 08:00)
+/srv/wren-backups/          # 备份归档:.tgz.age 加密(生产 cron `--encrypt`,#36)
+                            # 或 .tgz 明文(本机短期,umask 077);保留 14 份;
+                            # cron 每日 UTC 08:00。**异地副本只 rsync .tgz.age**
 ```
 
 ---
@@ -262,9 +264,23 @@ ssh -p 62769 root@104.233.146.220 'cd /srv/wren && docker compose logs -f bot'
 
 ### 🔥 数据恢复（最坏情况，data/ 误删）
 ```bash
-# 备份每天 UTC 08:00 自动跑
+# 1) 列归档(优先找 .tgz.age 加密产物;若环境还在过渡,可能也有 .tgz 明文)
 ssh -p 62769 root@104.233.146.220 'ls -lh /srv/wren-backups/'
-ssh -p 62769 root@104.233.146.220 'bash /srv/wren/scripts/restore.sh /srv/wren-backups/wren-<TS>.tgz /srv/wren'
+
+# 2) 加密归档(.tgz.age):先 openssl 解密到 tmp(passphrase 走 env 不留命令行)
+ssh -p 62769 root@104.233.146.220 \
+  'WREN_BACKUP_PASSPHRASE=<pass> openssl enc -d -aes-256-cbc -pbkdf2 \
+     -pass env:WREN_BACKUP_PASSPHRASE \
+     -in /srv/wren-backups/wren-<TS>.tgz.age -out /tmp/wren-<TS>.tgz'
+
+# 3) **必须先停服**(否则 live 写入与恢复交错 → 半新半旧,#27)
+ssh -p 62769 root@104.233.146.220 'cd /srv/wren && docker compose stop bot metrics viewer'
+
+# 4) 真要恢复 live(/srv/wren):
+ssh -p 62769 root@104.233.146.220 \
+  'bash /srv/wren/scripts/restore.sh /tmp/wren-<TS>.tgz --live && rm /tmp/wren-<TS>.tgz'
+ssh -p 62769 root@104.233.146.220 'cd /srv/wren && docker compose up -d --build && docker compose logs --tail=20 bot'
+# --live 自动备份当前 data/+world/ 到 /srv/wren/.pre-restore-<ts>/(失败时手动 mv 回滚)
 ```
 
 ### 🔥 token 冲突 `Conflict: terminated by other getUpdates`

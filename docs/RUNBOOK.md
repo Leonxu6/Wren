@@ -18,13 +18,22 @@ long-poll + 内存锁(per-chat)+ 内存 debounce + 进程内 JobQueue → **只�
 **勿** `docker compose up --scale bot=2`(双实例会争抢 getUpdates + 竞写同一用户目录)。50–200 用户单台足够。
 
 ## 3. 备份 + 恢复(命脉 · D3.4)
-丢 `data/` = 丢掉所有人挨来的关系。**备份是头号安全网。**
+丢 `data/` = 丢掉所有人挣来的关系。**备份是头号安全网。异地副本必须加密**(#36):
+data/users 含原始聊天 / inner voice / chat_id 目录名,明文 .tgz 离机违反"内容不出机器"。
 ```bash
-# 每晚备份 + 异地(cron):
-30 3 * * *  WREN_APP_DIR=/srv/wren WREN_BACKUP_DIR=/srv/wren-backups /srv/wren/scripts/backup.sh
-# 异地:再 rsync /srv/wren-backups 到对象存储/另一台机。
-# 恢复演练(务必真跑一次再上线):
-scripts/restore.sh /srv/wren-backups/wren-<TS>.tgz /tmp/restore-check
+# 每晚备份(cron;passphrase 走 env 不进 process args,防 ps 偷):
+30 3 * * *  WREN_BACKUP_PASSPHRASE=<random-pass> WREN_APP_DIR=/srv/wren \
+            WREN_BACKUP_DIR=/srv/wren-backups /srv/wren/scripts/backup.sh --encrypt
+# (产物 wren-<TS>.tgz.age,openssl AES-256-CBC + PBKDF2;passphrase 写 cron 的 env 文件)
+
+# 异地副本:**只 rsync .tgz.age 后缀**,绝不 cp 明文 .tgz
+30 4 * * *  rsync -avz --include='wren-*.tgz.age' --exclude='*' \
+            /srv/wren-backups/ <offsite>:/path/
+
+# 恢复演练(加密 .tgz.age):openssl 解密 → staging restore(不碰 live)
+openssl enc -d -aes-256-cbc -pbkdf2 -pass env:WREN_BACKUP_PASSPHRASE \
+  -in /srv/wren-backups/wren-<TS>.tgz.age -out /tmp/wren-<TS>.tgz
+scripts/restore.sh /tmp/wren-<TS>.tgz --staging /tmp/restore-check && rm /tmp/wren-<TS>.tgz
 diff -r /srv/wren/data /tmp/restore-check/data && echo OK
 ```
 
