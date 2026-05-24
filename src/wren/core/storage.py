@@ -52,6 +52,11 @@ _STUB_CORE = "# Core impression (长期蒸馏 · 永久注入 Step1 · 只被夜
 _STUB_UNRESOLVED = "# Unresolved feelings (她憋着没说的 · 夜结算更新 · 染色 Step1 / 供 P5)\n"
 
 
+def _dialogue_line(text: str) -> str:
+    """Conversation entries stay one physical line so user text cannot spoof roles."""
+    return str(text).replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\\n")
+
+
 @dataclass
 class Relationship:
     level: int  # 离散 Lv0-6,gate-key
@@ -338,8 +343,9 @@ class UserStore:
 
     # ---- conversation(最近对话,喂 Step1 context)----
     def append_dialogue(self, role: str, text: str) -> None:
+        safe_text = _dialogue_line(text)
         with self._conversation.open("a", encoding="utf-8") as f:
-            f.write(f"{role}: {text}\n")
+            f.write(f"{role}: {safe_text}\n")
 
     def read_recent_dialogue(self, limit: int = 30) -> str:
         if not self._conversation.exists():
