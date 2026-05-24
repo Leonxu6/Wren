@@ -55,7 +55,28 @@ def handle_turn(
     now = f"{clock.now():%A %H:%M}"
     store.append_dialogue("user", user_text)
     ctx = assemble_context(store, user_text, world=world, now=now)
-    s1 = run_step1(ctx, s1_model)
+
+    ts = iso_z(clock.now())
+    turn_id = f"{chat_id}-{count_traces(store.dir) + 1}"
+    rel = {"lv": ctx.relationship.level, "freeze": ctx.relationship.freeze}
+
+    # Step1 try/except(#53):模型抛 → 写 failure trace,返沉默 outcome;
+    # 不上抛让 caller 处理(handlers 已有错误日志,但 trace 必须落,observability 头等)
+    try:
+        s1 = run_step1(ctx, s1_model)
+    except Exception as e:  # noqa: BLE001 — observability:任何模型异常都要留 trace
+        failure_step1 = {
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "stage": "step1",
+            "model": getattr(s1_model, "name", "unknown"),
+        }
+        trace = TurnTrace(
+            turn_id, chat_id, ts, user_text, rel,
+            step1=failure_step1, step2=None, sent=None,
+        )
+        write_trace(store.dir, trace)
+        return TurnOutcome(False, [], 0, 0, [], trace)
 
     # Step1 写回:inner_voice + 印象 + 可能记住的事(沉默轮也记 → 必须在 reply 分支前)
     if s1.monologue:
@@ -64,10 +85,6 @@ def handle_turn(
         store.append_impression(s1.impression)
     if s1.event_to_store:
         store.append_event(**s1.event_to_store)
-
-    ts = iso_z(clock.now())
-    turn_id = f"{chat_id}-{count_traces(store.dir) + 1}"
-    rel = {"lv": ctx.relationship.level, "freeze": ctx.relationship.freeze}
     step1_dict = {
         "prompt": {  # 她"读到了什么"(动态 context;静态 canon 不重复落)
             "now": ctx.now,
@@ -97,7 +114,25 @@ def handle_turn(
         write_trace(store.dir, trace)
         return TurnOutcome(False, [], s1.delay_s, 0, [], trace)
 
-    s2 = run_step2(s1, ctx, s2_model)
+    # Step2 try/except(#53):s1 已成功(衍生数据 inner_voice/impression/event 已写);
+    # s2 失败 → 写 failure trace 含 step1_dict,**不写 wren dialogue**,返沉默 outcome。
+    # impression / event 保留(它们反映 s1 真实思考结果,与是否能发气泡无关)。
+    try:
+        s2 = run_step2(s1, ctx, s2_model)
+    except Exception as e:  # noqa: BLE001 — observability:任何模型异常都要留 trace
+        failure_step2 = {
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "stage": "step2",
+            "model": getattr(s2_model, "name", "unknown"),
+        }
+        trace = TurnTrace(
+            turn_id, chat_id, ts, user_text, rel,
+            step1=step1_dict, step2=failure_step2, sent=None,
+        )
+        write_trace(store.dir, trace)
+        return TurnOutcome(False, [], s1.delay_s, 0, [], trace)
+
     store.append_dialogue("wren", " / ".join(s2.bubbles))
     typing_ms, gaps = compute_pacing(s2.bubbles)
     step2_dict = {
