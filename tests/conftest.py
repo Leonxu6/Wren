@@ -22,6 +22,8 @@ def _force_fake(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv("WREN_API_KEY", raising=False)
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.setenv("WREN_ALLOW_DEV_METRICS_SALT", "1")
+    # #45 viewer auth bypass:client fixture 走 /api/* 必须 set,否则 503 fail-closed
+    monkeypatch.setenv("WREN_ALLOW_VIEWER_NO_AUTH", "1")
     monkeypatch.setenv("WREN_WORLD_ROOT", str(tmp_path / "world"))
 
 @pytest.fixture

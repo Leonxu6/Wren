@@ -18,6 +18,7 @@ def fake_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     users.mkdir(parents=True)
     monkeypatch.setenv("WREN_DATA_ROOT", str(users))
     monkeypatch.setenv("WREN_METRICS_SALT", "test-salt")
+    monkeypatch.setenv("WREN_ALLOW_VIEWER_NO_AUTH", "1")
 
     u1 = users / "11111"
     u1.mkdir()
@@ -535,3 +536,139 @@ def test_authorization_header_also_sets_cookie(
     )
     assert resp.status_code == 200
     assert "wren_viewer_session=secret-xyz" in resp.headers.get("Set-Cookie", "")
+
+
+# === #10:cost dashboard 语义一致性(turn_count vs user_msgs vs cost_usd 槽)===
+
+
+def _today_iso() -> str:
+    from datetime import date
+
+    return date.today().isoformat()
+
+
+def _trace_reactive_today(chat_id: str, n: int, *, replied: bool) -> Any:
+    from wren.core.trace import TurnTrace
+
+    step1 = {"reply": replied, "delay_s": 3, "impression": "", "selected_memory": [],
+             "event_stored": None, "tokens": 50, "latency_ms": 120,
+             "model": "deepseek-v4-flash"}
+    step2 = ({"tokens": 30, "latency_ms": 80, "model": "deepseek-v4-flash"}
+             if replied else None)
+    sent = ({"bubbles": ["hi"], "typing_ms": 600, "bubble_gaps_ms": []}
+            if replied else None)
+    return TurnTrace(
+        f"{chat_id}-r{n}", chat_id, f"{_today_iso()}T10:0{n}:00Z", "hi",
+        {"lv": 0, "freeze": False}, step1, step2, sent,
+    )
+
+
+def _trace_proactive_today(chat_id: str, n: int) -> Any:
+    from wren.core.trace import TurnTrace
+
+    step1 = {"reply": True, "delay_s": 0, "impression": "", "selected_memory": [],
+             "event_stored": None, "tokens": 40, "latency_ms": 90,
+             "model": "deepseek-v4-flash"}
+    step2 = {"tokens": 20, "latency_ms": 70, "model": "deepseek-v4-flash"}
+    sent = {"bubbles": ["hey"], "typing_ms": 600, "bubble_gaps_ms": []}
+    return TurnTrace(
+        f"{chat_id}-p{n}", chat_id, f"{_today_iso()}T11:0{n}:00Z", None,
+        {"lv": 0, "freeze": False}, step1, step2, sent, kind="proactive",
+    )
+
+
+@pytest.fixture
+def metrics_db_mixed_today(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """构造今日 metrics:3 reactive(1 沉默) + 2 proactive,跑 ingest 入库。
+
+    给 #10 用:让 turn_count(=5) ≠ user_msgs(=3),才能 catch
+    daily_cap 用错字段、cost.html 显示错字段、cost_usd 错位填入这三个 bug。"""
+    from wren.core.trace import write_trace
+    from wren.ops.ingest import ingest
+
+    data_root = tmp_path / "data" / "users"
+    data_root.mkdir(parents=True)
+    monkeypatch.setenv("WREN_DATA_ROOT", str(data_root))
+    monkeypatch.setenv("WREN_METRICS_SALT", "test-salt")
+    monkeypatch.setenv("WREN_ALLOW_VIEWER_NO_AUTH", "1")
+
+    cid = "77777"
+    d = data_root / cid
+    write_trace(d, _trace_reactive_today(cid, 1, replied=True))
+    write_trace(d, _trace_reactive_today(cid, 2, replied=True))
+    write_trace(d, _trace_reactive_today(cid, 3, replied=False))
+    write_trace(d, _trace_proactive_today(cid, 1))
+    write_trace(d, _trace_proactive_today(cid, 2))
+
+    db = tmp_path / "metrics.duckdb"
+    monkeypatch.setenv("WREN_METRICS_DB", str(db))
+    ingest(db_path=db, data_root=data_root)
+    return db
+
+
+def test_today_metrics_returns_turn_count_no_phantom_cost(
+    metrics_db_mixed_today: Path,
+) -> None:
+    """#10:today_metrics 返回真 turn_count + tokens,不再有 cost_usd 伪槽。"""
+    out = health.today_metrics()
+    assert out["available"] is True
+    # 5 turn 全计(reactive 3 + proactive 2)
+    assert out["turn_count"] == 5
+    # user_msgs 只算 reactive(=3)
+    assert out["user_msgs"] == 3
+    # 关键:turn_count > user_msgs(否则 DAILY_CAP 会少算)
+    assert out["turn_count"] > out["user_msgs"]
+    # completion tokens 真实展示(reactive 50+30=80 ×2 已回 + 50 沉默 + 40+20=60 ×2 主动)
+    assert out["completion_tokens"] is not None
+    assert out["completion_tokens"] > 0
+    # 伪 cost_usd 槽已删,不再存在
+    assert "cost_usd" not in out
+
+
+def test_daily_cap_used_pct_uses_turn_count_not_user_msgs(
+    metrics_db_mixed_today: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#10:DAILY_CAP used 用全 turn(含 proactive),不再用 user_msgs。
+
+    proactive turn 同样烧 CAP 但不计 user_msgs;用错字段会让 dashboard 显示
+    "还有余量"但真实 cap 已逼近上限。"""
+    monkeypatch.setenv("WREN_DAILY_TURN_CAP", "10")
+    cap = health.daily_cap_used_pct()
+    assert cap["used"] == 5  # turn_count,不是 user_msgs(3)
+    assert cap["pct"] == 50.0
+
+
+def test_cost_page_no_usd_phantom_shows_turn_count(
+    metrics_db_mixed_today: Path,
+) -> None:
+    """#10:cost 页不再出现 $USD 伪成本;首屏卡片展示真 turn_count。"""
+    web.app.config["TESTING"] = True
+    web._refresh_hash_index()
+    client_ = web.app.test_client()
+    resp = client_.get("/cost", environ_overrides={"REMOTE_ADDR": "127.0.0.1"})
+    assert resp.status_code == 200
+    body = resp.data.decode()
+    # 删 cost_usd / USD 字样(无 pricing model,§15 开放)
+    assert "USD" not in body
+    assert "cost_usd" not in body
+    # 真 turn_count 字样在场
+    assert "今日 turn 数" in body
+
+
+def test_api_cost_today_turn_count_eq_daily_cap_used(
+    metrics_db_mixed_today: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#10:/api/cost 的 today.turn_count == daily_cap.used(同一语义,不能两套)。"""
+    monkeypatch.setenv("WREN_DAILY_TURN_CAP", "100")
+    web.app.config["TESTING"] = True
+    web._refresh_hash_index()
+    client_ = web.app.test_client()
+    resp = client_.get("/api/cost", environ_overrides={"REMOTE_ADDR": "127.0.0.1"})
+    assert resp.status_code == 200
+    j = resp.get_json()
+    assert j is not None
+    assert j["today"]["turn_count"] == j["daily_cap"]["used"]
+    # mixed-kind 场景下:user_msgs ≠ turn_count(catch 用错字段的回归)
+    assert j["today"]["user_msgs"] != j["today"]["turn_count"]

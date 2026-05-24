@@ -8,8 +8,9 @@
 
 <div class="kpi-row" style="grid-template-columns: repeat(3, 1fr);">
   <div class="kpi-card">
-    <div class="label">今日 cost</div>
-    <div class="value">${{ today.cost_usd or 0 }}<span class="unit">USD</span></div>
+    <div class="label">今日 turn 数</div>
+    <div class="value">{{ today.turn_count or 0 }}</div>
+    <div class="sub-value muted">含 reactive + proactive + scheduler</div>
   </div>
   <div class="kpi-card">
     <div class="label">DAILY_CAP</div>
@@ -23,8 +24,9 @@
     {% endif %}
   </div>
   <div class="kpi-card">
-    <div class="label">今日 turn 数</div>
-    <div class="value">{{ today.user_msgs or 0 }}</div>
+    <div class="label">今日 tokens</div>
+    <div class="value">{{ today.completion_tokens or 0 }}</div>
+    <div class="sub-value muted">completion only(成本下界)</div>
   </div>
 </div>
 
