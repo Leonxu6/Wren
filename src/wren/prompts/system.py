@@ -93,15 +93,30 @@ def build_reply_messages(
 
 
 def parse_bubbles(text: str) -> list[str]:
-    """解析模型输出的 {"messages": [...]};稳健容错(非 JSON 时退化为按行切)。"""
+    """解析模型输出的 {"messages": [...]} 或顶层 list。
+
+    #31 修复:JSON / fenced JSON 解析失败 → 返 `[]`(由 pipeline 走 silence-on-malformed
+    fail-closed 路径,**不再** fallback `text.splitlines()`)。
+    旧 fallback 会把截断 JSON / 普通错误文本 / debug text 按行切成"气泡"发给用户 +
+    污染 conversation/trace —— 见 #31。
+
+    fenced JSON(```json {...} ```)仍正常解析,因为 loads_lenient 模式在 step2
+    用 response_format=json 时模型一般直出 raw JSON;若 LLM 偶发包 fence,这里
+    `json.loads` 仍能解 raw block(其它无效 fenced → 走 [] silence 路径)。
+    """
     text = text.strip()
+    # 容 fenced JSON:```json {...} ``` / ``` {...} ```
+    if text.startswith("```"):
+        stripped = text.strip("`")
+        if stripped.lower().startswith("json"):
+            stripped = stripped[4:]
+        text = stripped.strip()
     try:
         data = json.loads(text)
-        if isinstance(data, dict) and isinstance(data.get("messages"), list):
-            return [str(m).strip() for m in data["messages"] if str(m).strip()]
-        if isinstance(data, list):
-            return [str(m).strip() for m in data if str(m).strip()]
     except json.JSONDecodeError:
-        pass
-    # 退化:按行切,丢空行
-    return [ln.strip() for ln in text.splitlines() if ln.strip()]
+        return []  # malformed → silence(pipeline 走 fail-closed 路径)
+    if isinstance(data, dict) and isinstance(data.get("messages"), list):
+        return [str(m).strip() for m in data["messages"] if str(m).strip()]
+    if isinstance(data, list):
+        return [str(m).strip() for m in data if str(m).strip()]
+    return []  # JSON 合法但 schema 不对(不是 dict.messages 也不是 list)→ silence

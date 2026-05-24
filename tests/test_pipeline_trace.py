@@ -207,3 +207,71 @@ def test_consecutive_failure_traces_have_distinct_turn_ids(data_root: Path) -> N
     assert traces[0]["turn_id"] != traces[1]["turn_id"]
     assert traces[0]["step1"]["error"] == "first"
     assert traces[1]["step1"]["error"] == "second"
+
+
+# === #31:silence-on-malformed(parse_bubbles 失败 → silence,不发 raw text)===
+
+
+def test_parse_bubbles_returns_empty_on_malformed_json() -> None:
+    """#31:parse_bubbles 在 JSON 解析失败时返 `[]`,**不再** fallback `splitlines`。"""
+    from wren.prompts.system import parse_bubbles
+
+    # 截断 JSON(老 fallback 会按行切把 `{"messages":["hi"` 当 1 bubble 发)
+    assert parse_bubbles('{"messages":["hi"') == []
+    # 普通错误文本
+    assert parse_bubbles("Sorry, I cannot help with that.") == []
+    # debug text
+    assert parse_bubbles("DEBUG: model selected gpt-4") == []
+    # 合法 JSON 但 schema 错(顶层 dict 无 messages key)
+    assert parse_bubbles('{"foo": "bar"}') == []
+    # 顶层 string
+    assert parse_bubbles('"just a string"') == []
+    # 合法 JSON 仍正常解析
+    assert parse_bubbles('{"messages":["hi","there"]}') == ["hi", "there"]
+    # 顶层 list 也接受
+    assert parse_bubbles('["hi","there"]') == ["hi", "there"]
+    # fenced JSON
+    assert parse_bubbles('```json\n{"messages":["hi"]}\n```') == ["hi"]
+
+
+_S2_MALFORMED = '{"messages":["hi"'  # 截断 JSON,parse_bubbles 返 []
+
+
+def test_step2_malformed_output_goes_silence_no_send(data_root: Path) -> None:
+    """#31 端到端:Step2 返截断 JSON → parse_bubbles=[] → pipeline silence,
+    **不写 wren dialogue**,**不发 raw text**,落 failure trace 含 step2.error。"""
+    s = UserStore("mal1", data_root)
+    s.init_user()
+    s1 = FakeChatModel(script=[_S1_REPLY])
+    s2_bad = FakeChatModel(script=[_S2_MALFORMED])
+
+    out = handle_turn("mal1", "you up", s, s1, s2_bad)
+
+    assert not out.replied
+    assert out.bubbles == []
+    # 关键:wren dialogue **不写**(防截断 JSON 残片被当 wren 回话进 conversation)
+    conv = (s.dir / "conversation.md").read_text(encoding="utf-8")
+    assert "user: you up" in conv
+    assert "wren:" not in conv
+    assert "messages" not in conv  # 防 raw `{"messages":["hi"` 漏到 conversation
+    # failure trace 落,标 step2 stage
+    traces = read_traces(s.dir)
+    assert len(traces) == 1
+    assert traces[0]["step2"].get("stage") == "step2"
+    err = traces[0]["step2"].get("error", "").lower()
+    assert "empty" in err or "malformed" in err
+
+
+def test_step2_plain_error_text_does_not_become_bubbles(data_root: Path) -> None:
+    """#31:模型返"Sorry, I cannot..."等供应商错误文本 → silence,不当 bubble 发。"""
+    s = UserStore("mal2", data_root)
+    s.init_user()
+    s1 = FakeChatModel(script=[_S1_REPLY])
+    s2_err = FakeChatModel(script=["I'm sorry, I can't help with that request."])
+
+    out = handle_turn("mal2", "hi", s, s1, s2_err)
+
+    assert not out.replied
+    conv = (s.dir / "conversation.md").read_text(encoding="utf-8")
+    assert "Sorry" not in conv and "sorry" not in conv
+    assert "wren:" not in conv

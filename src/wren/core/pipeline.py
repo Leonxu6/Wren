@@ -162,6 +162,17 @@ def handle_turn(
         )
         return TurnOutcome(False, [], s1.delay_s, 0, [], trace)
 
+    # #31 silence-on-malformed:parse_bubbles 在 JSON 解析失败或 schema 不对时返 [],
+    # 这里把"空 bubbles"也当 step2 失败处理 → 走同样 failure trace + silence,
+    # **绝不**发 raw model text,**绝不**写 wren conversation。
+    if not s2.bubbles:
+        trace = _write_failure_trace(
+            store, turn_id, chat_id, ts, user_text, rel,
+            stage="step2", error=ValueError("parse_bubbles returned empty (malformed JSON or wrong schema)"),
+            model=s2_model, step1_dict=step1_dict,
+        )
+        return TurnOutcome(False, [], s1.delay_s, 0, [], trace)
+
     store.append_dialogue("wren", " / ".join(s2.bubbles))
     typing_ms, gaps = compute_pacing(s2.bubbles)
     step2_dict = {
@@ -258,6 +269,16 @@ def handle_proactive_turn(
             store, turn_id, chat_id, ts, None, rel,
             stage="step2", error=e, model=s2_model,
             step1_dict=step1_dict, kind="proactive",
+        )
+        return TurnOutcome(False, [], s1.delay_s, 0, [], trace)
+
+    # #31 silence-on-malformed(proactive 对称):空 bubbles → silence + failure trace
+    if not s2.bubbles:
+        trace = _write_failure_trace(
+            store, turn_id, chat_id, ts, None, rel,
+            stage="step2",
+            error=ValueError("parse_bubbles returned empty (malformed JSON or wrong schema)"),
+            model=s2_model, step1_dict=step1_dict, kind="proactive",
         )
         return TurnOutcome(False, [], s1.delay_s, 0, [], trace)
 
