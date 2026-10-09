@@ -6,7 +6,7 @@
 
 ## 0. 30 秒速览
 
-**Wren** = 英文人格 Telegram 关系模拟 bot（@Ewan63737bot），单实例部署在 **RAKsmart VPS** (`104.233.146.220:62769`)，Docker compose 跑 3 个容器（`bot` 对话 + `metrics` 监测 + `viewer` 运维 dashboard）。
+**Wren** = 英文人格 Telegram 关系模拟 bot（@Ewan63737bot），单实例部署在 **RAKsmart VPS** (`203.0.113.10:62769`)，Docker compose 跑 3 个容器（`bot` 对话 + `metrics` 监测 + `viewer` 运维 dashboard）。
 
 - **代码进度**：P0–P6 完成 + W0–W8.1 上线硬化与运维平台完成。详见 [CLAUDE.md](CLAUDE.md) 的「Build state」段（**接手时第一步：读这一段确认是否过时**）。
 - **分发链接**：`https://t.me/Ewan63737bot?start=<campaign>`（公开，任何 Telegram 用户都能聊；`<campaign>` 落 `data/users/<chat_id>/source.md` 做归因）。
@@ -17,7 +17,7 @@
 ## 1. 心智模型（一张图）
 
 ```
-你的电脑                              VPS (104.233.146.220)              Telegram 用户
+你的电脑                              VPS (203.0.113.10)              Telegram 用户
 ─────────                              ──────────────────                ─────────────
 /Users/leon/project/HERR        ─►    /srv/wren                  ─►     bot 在跑
 (改代码 + 跑测试)              rsync   (docker compose: 3 容器)           接收/回复
@@ -97,7 +97,7 @@
 ### 起隧道 + 打开(生产必带 token,#45)
 ```bash
 # 1) 一次性后台起隧道
-ssh -fN -L 8002:127.0.0.1:8002 -p 62769 root@104.233.146.220
+ssh -fN -L 8002:127.0.0.1:8002 -p 62769 root@203.0.113.10
 
 # 2) 浏览器首次带 ?token,后续点 /users / /u/<chat_id> 自动走 cookie session
 open "http://localhost:8002/?token=$WREN_VIEWER_TOKEN"
@@ -174,9 +174,9 @@ WREN_FAKE_MODEL=1 uv run pytest -q
 `.env` **不在 git 里**（gitignored），所以**不能 rsync**。直接在 VPS 上改：
 
 ```bash
-ssh -p 62769 root@104.233.146.220 'vi /srv/wren/.env'
+ssh -p 62769 root@203.0.113.10 'vi /srv/wren/.env'
 # 改完重启对应服务(env_file 在容器启动时读)
-ssh -p 62769 root@104.233.146.220 'cd /srv/wren && docker compose restart bot'
+ssh -p 62769 root@203.0.113.10 'cd /srv/wren && docker compose restart bot'
 ```
 
 **永远不要 commit `.env`！** 如果 secret 误进了 git，立即 `git reset` + 去 BotFather `/revoke` 重发 token。
@@ -227,14 +227,14 @@ if ! git diff --quiet HEAD; then
 fi
 STAGE=$(mktemp -d); trap 'rm -rf "$STAGE"' EXIT
 git archive HEAD | tar -x -C "$STAGE"
-rsync -az -e "ssh -p 62769" "$STAGE"/ root@104.233.146.220:/srv/wren/
+rsync -az -e "ssh -p 62769" "$STAGE"/ root@203.0.113.10:/srv/wren/
 
 echo "== 3) rebuild + restart =="
-ssh -p 62769 root@104.233.146.220 "cd /srv/wren && docker compose up -d --build $SERVICE"
+ssh -p 62769 root@203.0.113.10 "cd /srv/wren && docker compose up -d --build $SERVICE"
 
 echo "== 4) tail logs =="
 sleep 4
-ssh -p 62769 root@104.233.146.220 "cd /srv/wren && docker compose logs --tail=20 $SERVICE"
+ssh -p 62769 root@203.0.113.10 "cd /srv/wren && docker compose logs --tail=20 $SERVICE"
 ```
 
 **为什么是 git archive 而不是 `rsync ./` + exclude(#13)**:
@@ -256,40 +256,40 @@ ssh -p 62769 root@104.233.146.220 "cd /srv/wren && docker compose logs --tail=20
 
 ### VPS 端回滚到任一历史 commit
 ```bash
-ssh -p 62769 root@104.233.146.220 'cd /srv/wren && git log --oneline | head -10'
+ssh -p 62769 root@203.0.113.10 'cd /srv/wren && git log --oneline | head -10'
 # 选一个稳定的 hash
-ssh -p 62769 root@104.233.146.220 'cd /srv/wren && git checkout <hash>'
-ssh -p 62769 root@104.233.146.220 'cd /srv/wren && docker compose up -d --build'
+ssh -p 62769 root@203.0.113.10 'cd /srv/wren && git checkout <hash>'
+ssh -p 62769 root@203.0.113.10 'cd /srv/wren && docker compose up -d --build'
 # ./data/ 是挂卷,回滚版本不丢用户关系数据
 ```
 
 ### 🔥 看实时日志
 ```bash
-ssh -p 62769 root@104.233.146.220 'cd /srv/wren && docker compose logs -f bot'
+ssh -p 62769 root@203.0.113.10 'cd /srv/wren && docker compose logs -f bot'
 # 或者打开 dashboard `/errors` 自动 grep 24h
 ```
 
 ### 🔥 数据恢复（最坏情况，data/ 误删）
 ```bash
 # 1) 列归档(优先找 .tgz.age 加密产物;若环境还在过渡,可能也有 .tgz 明文)
-ssh -p 62769 root@104.233.146.220 'ls -lh /srv/wren-backups/'
+ssh -p 62769 root@203.0.113.10 'ls -lh /srv/wren-backups/'
 
 # 2) 加密归档(.tgz.age):先 openssl 解密到 tmp(passphrase 走 env 不留命令行)
-ssh -p 62769 root@104.233.146.220 \
+ssh -p 62769 root@203.0.113.10 \
   'WREN_BACKUP_PASSPHRASE=<pass> openssl enc -d -aes-256-cbc -pbkdf2 \
      -pass env:WREN_BACKUP_PASSPHRASE \
      -in /srv/wren-backups/wren-<TS>.tgz.age -out /tmp/wren-<TS>.tgz'
 
 # 3) 演练:默认 staging,解到 tmp 核对(不碰 live)
-ssh -p 62769 root@104.233.146.220 'bash /srv/wren/scripts/restore.sh /tmp/wren-<TS>.tgz --staging /tmp/restore-check'
+ssh -p 62769 root@203.0.113.10 'bash /srv/wren/scripts/restore.sh /tmp/wren-<TS>.tgz --staging /tmp/restore-check'
 
 # 4) **必须先停服**(否则 live 写入与恢复交错 → 半新半旧,#27)
-ssh -p 62769 root@104.233.146.220 'cd /srv/wren && docker compose stop bot metrics viewer'
+ssh -p 62769 root@203.0.113.10 'cd /srv/wren && docker compose stop bot metrics viewer'
 
 # 5) 真要恢复 live(/srv/wren):
-ssh -p 62769 root@104.233.146.220 \
+ssh -p 62769 root@203.0.113.10 \
   'bash /srv/wren/scripts/restore.sh /tmp/wren-<TS>.tgz --live && rm /tmp/wren-<TS>.tgz'
-ssh -p 62769 root@104.233.146.220 'cd /srv/wren && docker compose up -d --build && docker compose logs --tail=20 bot'
+ssh -p 62769 root@203.0.113.10 'cd /srv/wren && docker compose up -d --build && docker compose logs --tail=20 bot'
 # --live 自动备份当前 data/+world/ 到 /srv/wren/.pre-restore-<ts>/(失败时手动 mv 回滚)
 ```
 
@@ -301,11 +301,11 @@ ssh -p 62769 root@104.233.146.220 'cd /srv/wren && docker compose up -d --build 
 
 ```bash
 # 1. 确认 VPS 端 viewer 还在跑
-ssh -p 62769 root@104.233.146.220 'cd /srv/wren && docker compose ps viewer'
+ssh -p 62769 root@203.0.113.10 'cd /srv/wren && docker compose ps viewer'
 # 应看到 Up X hours
 
 # 2. 重新起本机 SSH 隧道(后台 -fN,跑一次即可)
-ssh -fN -L 8002:127.0.0.1:8002 -p 62769 root@104.233.146.220
+ssh -fN -L 8002:127.0.0.1:8002 -p 62769 root@203.0.113.10
 
 # 3. 验证(生产带 WREN_VIEWER_TOKEN 必须用 Authorization Header 或 ?token;#45)
 curl -s -o /dev/null -w "%{http_code}\n" \
@@ -436,7 +436,7 @@ git branch -d fix/lv3-money-too-soft     # 删特性分支
 | 项 | 值 |
 |---|---|
 | VPS 厂商 | RAKsmart |
-| IP | `104.233.146.220` |
+| IP | `203.0.113.10` |
 | SSH 端口 | `62769`（非默认 22） |
 | SSH 用户 | `root` |
 | OS | Ubuntu 22.04 LTS |
@@ -457,7 +457,7 @@ git branch -d fix/lv3-money-too-soft     # 删特性分支
 |---|---|
 | Username | `@Ewan63737bot` |
 | 分发链接 | `https://t.me/Ewan63737bot?start=<campaign>` |
-| Owner chat_id（调试命令白名单） | `7952767637` |
+| Owner chat_id（调试命令白名单） | `0000000000` |
 
 ---
 

@@ -41,7 +41,7 @@ STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 git archive HEAD | tar -x -C "$STAGE"
 
-rsync -az -e "ssh -p 62769" "$STAGE"/ root@104.233.146.220:/srv/wren/
+rsync -az -e "ssh -p 62769" "$STAGE"/ root@203.0.113.10:/srv/wren/
 echo "  ✓ rsync OK (tracked-only,$(find "$STAGE" -type f | wc -l | tr -d ' ') 个文件)"
 
 echo
@@ -54,7 +54,7 @@ if [ "$SERVICE" = "all" ]; then
 else
   REBUILD_CMD="cd /srv/wren && docker compose up -d --build $SERVICE"
 fi
-if ! ssh -p 62769 root@104.233.146.220 "$REBUILD_CMD" > "$REBUILD_LOG" 2>&1; then
+if ! ssh -p 62769 root@203.0.113.10 "$REBUILD_CMD" > "$REBUILD_LOG" 2>&1; then
   echo "✗ 远端 rebuild 失败,最后 20 行:" >&2
   tail -20 "$REBUILD_LOG" >&2
   exit 1
@@ -64,7 +64,7 @@ tail -20 "$REBUILD_LOG"
 echo
 echo "== 4) tail logs(最近 20 行) =="
 sleep 4
-ssh -p 62769 root@104.233.146.220 "cd /srv/wren && docker compose logs --tail=20 $SERVICE"
+ssh -p 62769 root@203.0.113.10 "cd /srv/wren && docker compose logs --tail=20 $SERVICE"
 
 echo
 echo "✓ deploy.sh 完成 · 见 dashboard http://localhost:8002(需 SSH 隧道)"

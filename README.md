@@ -1,63 +1,114 @@
-# Wren — 英文 AI 关系模拟 Telegram bot(Phase 0–6 已建 · P7 部分)
+# Wren
 
-英文 AI 关系模拟 Telegram bot "Wren"。**Phase 0–6 已建并合入 `main`**:P0 单轮 eval + voice bake-off(掐头号风险 §15#4)、P1 walking skeleton(Telegram ↔ think→speak ↔ per-user markdown ↔ trace)、P2 多轮回归网、P3 记忆、P4 world/life-sim(时段因果)、P5 主动消息、P6 夜间关系结算;**P7(Lv4 深夜脆弱)仅部分**(level-gate + 对/错回应分支通,无专门崩溃引擎)。设计权威仍领先代码。
+**An AI character with a life outside the chat.**
 
-设计权威在仓库根:`PRD_product.md` / `ARCHITECTURE.md` / `EVAL_spec.md` / `eval/eval_set.md` / `tasks/`。
+Wren is an English-language relationship simulation delivered through Telegram. It explores a product question: can an AI character sustain a distinct personality, remember shared history, and disagree with a user without becoming a generic assistant?
 
-## 装
+The experience begins with a message request accepted by a fictional Brooklyn art-school character. Familiarity develops across conversations and days; affection is not the default response. Wren is explicitly disclosed as AI, the onboarding is marked 18+, and the product's content ceiling is suggestive rather than explicit.
 
-```bash
-uv sync
-cp .env.example .env   # 填 key/token;留空 WREN_API_KEY → 自动 fake 模式
+**Status:** implemented prototype with Telegram transport, memory, daily world state, proactive scheduling, nightly relationship updates, evaluation tooling, and an operations viewer. The deeper vulnerability/recovery arc remains partial. This repository demonstrates the implementation and its tests; it does not establish retention, revenue, or a current production service.
+
+[Product brief](PRD_product.md) · [Architecture](ARCHITECTURE.md) · [Evaluation design](EVAL_spec.md) · [Operations runbook](docs/RUNBOOK.md)
+
+## The product decisions
+
+| Decision | Why it matters | Implementation |
+| --- | --- | --- |
+| Decide before speaking | Character judgment should survive the pressure to please the user. | A first model call forms a private character state and reply decision; a second renders the result into short message bubbles. |
+| Remember events, not just a transcript | A relationship needs continuity beyond the most recent prompt. | Per-user event memory, impressions, qualitative relationship state, and nightly settlement. |
+| Give the character a day of her own | Time and events should affect a conversation. | Shared world state, an injectable clock, scheduled proactive turns, and activity/budget gates. |
+| Keep progression qualitative | A points counter would turn a relationship into an optimization game. | Discrete access levels plus prose and freeze state; no accumulated affection score. |
+| Evaluate experience separately from mechanics | Valid JSON does not prove that a character feels specific or consistent. | Offline contract tests, voice checks, multi-turn scenarios, and a separate model-judged “aliveness” rubric. |
+
+These are design hypotheses encoded in a working system. Their effect on the user experience still needs independent evaluation.
+
+## How it works
+
+```mermaid
+flowchart LR
+    U[Telegram message] --> T[Debounce and per-chat lock]
+    T --> C[Assemble context]
+    M[(Per-user Markdown)] --> C
+    W[World state and clock] --> C
+    C --> S1[Step 1: character judgment]
+    S1 --> D{Reply?}
+    D -->|Yes| S2[Step 2: voice and bubbles]
+    D -->|No| X[Trace silence]
+    S2 --> Send[Telegram delivery]
+    Send --> P[Persist delivered reply and trace]
+    N[Nightly settlement] --> M
 ```
 
-## 离线验证(无需 key/token)
+The core depends on a small `ChatModel` interface. A deterministic fake and an OpenAI-compatible adapter share that contract, allowing storage, scheduling, failure handling, and transport behavior to be exercised without API credentials. Evaluation code is separate from the production turn pipeline.
+
+## Review the engineering
+
+| Area | Code and tests worth opening |
+| --- | --- |
+| Two-stage orchestration and delivery failures | [`pipeline.py`](src/wren/core/pipeline.py), [`test_pipeline_trace.py`](tests/test_pipeline_trace.py), [`test_bot_handlers.py`](tests/test_bot_handlers.py) |
+| User isolation, deletion, and atomic storage | [`storage.py`](src/wren/core/storage.py), [`atomicio.py`](src/wren/core/atomicio.py), [`test_isolation.py`](tests/test_isolation.py) |
+| Background jobs sharing the live-turn lock | [`scheduler.py`](src/wren/bot/scheduler.py), [`test_settle_concurrency.py`](tests/test_settle_concurrency.py), [`test_proactive_scheduler.py`](tests/test_proactive_scheduler.py) |
+| Model substitution and offline testing | [`model/`](src/wren/model/), [`test_model_registry.py`](tests/test_model_registry.py), [`conftest.py`](tests/conftest.py) |
+| Experience evaluation | [`eval/`](src/wren/eval/), [`eval/corpus/`](eval/corpus/), [`EVAL_spec.md`](EVAL_spec.md) |
+| Operational visibility and recovery | [`ops/`](src/wren/ops/), [`test_web.py`](tests/test_web.py), [`test_backup_encryption.py`](tests/test_backup_encryption.py), [`test_restore_safety.py`](tests/test_restore_safety.py) |
+
+Generated output and delivered output are treated separately: Telegram handlers persist the visible reply only after sending succeeds. Per-user traces retain stage and failure information for diagnosis. Metrics use salted identifiers; the local operations viewer has a token-authentication gate and can inspect sensitive traces, so it is an operator tool.
+
+## Run the offline checks
+
+Requires Python 3.11+ and [uv](https://github.com/astral-sh/uv). Dependency installation needs network access; the following test run uses fake models and mocked Telegram transport.
 
 ```bash
-WREN_FAKE_MODEL=1 uv run pytest -q     # 175 用例:机械门/语料/judge/管线/trace/bot handler/world/proactive/settlement…
-uv run ruff check . && uv run mypy src
-```
-所有逻辑、契约、管线、写边界铁律在 fake 下端到端可验证。
+git clone https://github.com/Leonxu6/Wren.git
+cd Wren
+uv sync --locked
 
-## 跑 Phase 0 voice bake-off(需 WREN_API_KEY,真出结论)
+WREN_FAKE_MODEL=1 uv run pytest -q
+uv run ruff check .
+uv run mypy src
+```
+
+No `.env`, bot token, or model API key is needed for these checks. Tests isolate user and world data in temporary directories. A focused starting point is:
 
 ```bash
-uv run wren-harness                 # 全语料 × 候选模型 × N reps → 模型×Cat×通过率矩阵 + bake-off + verdict
-uv run wren-harness --quick --reps 2 --no-bakeoff   # 省钱冒烟
-uv run wren-harness --category 3    # 只跑反谄媚(pillar#2)
+WREN_FAKE_MODEL=1 uv run pytest -q \
+  tests/test_pipeline_trace.py tests/test_isolation.py \
+  tests/test_proactive_scheduler.py tests/test_settle_concurrency.py
 ```
-产出:每个候选模型的「Cat × 通过率」+ 反谄媚 Cat3 通过率(门槛 90%)+ 对甜妹 baseline 胜率(门槛 70%)+ 失败样本明细。结论见 `docs/p0_verdict.md`。
 
-## 起 Telegram bot(需 TELEGRAM_BOT_TOKEN + WREN_API_KEY)
+Passing fake-model tests demonstrates software behavior, not dialogue quality.
+
+## Run a connected bot or evaluation
+
+Copy `.env.example` to `.env` and configure a compatible model endpoint, `WREN_API_KEY`, and `TELEGRAM_BOT_TOKEN`. Review the [runbook](docs/RUNBOOK.md) before exposing a bot: owner-only debug commands, rate limits, model-call budgets, metrics salt, viewer authentication, and backup handling are deployment concerns.
 
 ```bash
 uv run wren-bot
+
+# Separate, paid model-evaluation runs:
+uv run wren-harness --quick --reps 2 --no-bakeoff
+uv run wren-multiturn --quick
+uv run wren-aliveness --quick
 ```
-真机:对 bot `/start` → 18+/AI 披露 + 背景文案 + 她沉默 → 打一句 → 几秒后多条短气泡。每轮落一条 trace 到 `data/users/{chat_id}/trace.jsonl`;`/delete` 清空。
 
-## 模型(§15 开放项)
+These commands contact external services. The example model names are repository configuration choices, not a guarantee of current provider availability. `/delete` removes the user's local conversation state; live data and credentials should never be committed.
 
-文档原写候选 **DeepSeek-V3**;供应商已升级到 V4 代(V3 下线),依「LLM 选型是开放提案」改用当前模型:
-- `deepseek-v4-flash` = 便宜候选(头号风险:它能否撑住 Wren voice)。
-- `deepseek-v4-pro` = 更强对照 + 判官(judge)。
+## What is still open
 
-换任何 openai 兼容供应商只改 `.env`(`WREN_BASE_URL/WREN_MODEL`),**零改代码**(model-router seam,`src/wren/model/`)。
+- **Experience quality:** fake-model tests cannot validate voice, emotional consistency, or long-term relationship quality. The [historical Phase 0 report](docs/p0_verdict.md) explicitly invalidates its earlier full evaluation matrix after prompt changes; it is not a current benchmark.
+- **Memory quality:** indirect recall remains a documented weak point of the cheaper model configuration. Retrieval scaffolding working does not mean the model reliably makes the right association.
+- **Narrative depth:** level-gated vulnerability exists, but Phase 7 has no dedicated breakdown/recovery engine.
+- **Deployment scale:** the Markdown store and in-process locks target a single application instance. Horizontal scaling requires a different concurrency/storage boundary.
+- **Product validation:** audience size and subscription ideas in the product brief are targets, not achieved results.
 
-## 红线(贯穿,见 `ARCHITECTURE.md §0` / `PRD §3`)
+## Stack and attribution
 
-涌现 > 模块:机械门/judge 只在 `src/wren/eval/`(**生产 `src/wren/core/` 不 import 它**);关系只存离散 level + 定性散文 + freeze(**非积分**);level 永不当语气旋钮;memory 只进 Step1;think→speak 两次 call,判断锁在 Step1,**沉默是头等 branch**;用户线永不写 `world/`/`canon/`。
+Python · python-telegram-bot · OpenAI Python SDK / compatible model APIs · Flask · DuckDB · pytest · Ruff · mypy
 
-## 目录
+Wren's application logic, character design, prompts, evaluation corpus, and operating workflow live in this repository. Telegram transport is provided by [python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot); model inference is supplied by the configured external provider. The project does not train its own foundation model.
 
-```
-canon/            Wren ground truth(backstory/voice/golden;§15 提案标 proposal)
-eval/corpus/      单轮语料 fixture(Cat1-6)
-src/wren/
-  model/          ★ model-router seam(fake + openai 兼容真实适配器 + registry)
-  prompts/        Wren system 种子(反谄媚两轴)+ step1/step2/judge prompt
-  eval/           机械门 + judge + 打分内核(scorer)+ harness + bakeoff + replay
-  core/           生产链路:storage / clock / context / step1 / step2 / pipeline / trace
-  onboarding/     §9.1 静态文案(不走 LLM)
-  bot/            Telegram I/O:handlers / debounce / sender / app
-tests/            离线 fake 下全绿
-```
+## 中文概述
+
+Wren 是一个通过 Telegram 交互的英文 AI 角色与关系模拟项目。产品关注的是：怎样让角色拥有稳定的性格、自己的生活、跨天记忆，以及拒绝和表达不同意见的能力。
+
+实现覆盖了「先判断、再表达」的双阶段模型调用、按用户隔离的 Markdown 记忆、世界状态、主动消息、夜间关系更新、离线测试和运维工具。仓库同时保留产品取舍与评测边界：离线测试通过不等于角色体验优秀，历史评测不等于当前效果，商业目标也不等于已经取得的用户或营收成果。

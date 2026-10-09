@@ -1,8 +1,8 @@
 # Wren 端到端测试战役 · 台账(浏览器/Telegram 用户视角 + 自主修复循环)
 
 环境:worktree `busy-williams-1062e7`(= main @ 85d4456 FF-merge `p4-6-integrated` 30a7980)。
-真实模型 `deepseek-v4-flash`;裁判 = 我(Opus 4.7)。bot @Ewan63737bot,chat_id `7952767637`。
-trace:`data/users/7952767637/trace.jsonl`;实时日志 `/tmp/wren_eval/bot.log`。
+真实模型 `deepseek-v4-flash`;裁判 = 我(Opus 4.7)。bot @Ewan63737bot,chat_id `0000000000`。
+trace:`data/users/0000000000/trace.jsonl`;实时日志 `/tmp/wren_eval/bot.log`。
 脚手架:`/setlevel <0-6>`、`/tick [force]`、`wren-nightly`、`WREN_CLOCK_OVERRIDE=<ISO>`。
 
 ---
